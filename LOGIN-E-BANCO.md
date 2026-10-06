@@ -6,9 +6,15 @@ enquanto `backend-config.js` tiver `enabled: false`.
 
 ## 1. Instalar as tabelas e permissões
 
-No painel do projeto Supabase, abra **SQL Editor → New query**. Copie o conteúdo completo
-de `supabase/migrations/202610060001_workspace.sql` e clique em **Run** uma única vez.
-A migração roda dentro de uma transação: se ocorrer um erro, nenhuma parte é instalada.
+No painel do projeto Supabase, abra **SQL Editor → New query**. Execute os arquivos abaixo,
+nessa ordem, cada um em uma consulta separada:
+
+1. `supabase/migrations/202610060001_workspace.sql`
+2. `supabase/migrations/202610060002_google_destination_safeupdate.sql`
+
+Cada arquivo roda em uma transação. Se a primeira migração já foi instalada, execute apenas
+a segunda. Ela corrige o erro `UPDATE requires a WHERE clause` ao salvar o destino do Google,
+preservando os pedidos e as permissões. Não execute novamente o script de criação das tabelas.
 
 São criadas as tabelas `profiles`, `orders` e `app_settings`. Todas têm Row Level Security.
 O vendedor lê, salva e exclui apenas seus próprios pedidos. O administrador vê todos,

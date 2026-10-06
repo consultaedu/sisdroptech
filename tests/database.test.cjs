@@ -13,7 +13,8 @@ test('PostgreSQL real: RLS separa vendedores, bloqueia promoção, acesso anôni
    create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
    create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
    grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
-  await db.exec(fs.readFileSync(path.join(__dirname,'../supabase/migrations/202610060001_workspace.sql'),'utf8'));
+  const migrations=path.join(__dirname,'../supabase/migrations');
+  for(const file of fs.readdirSync(migrations).filter(name=>name.endsWith('.sql')).sort())await db.exec(fs.readFileSync(path.join(migrations,file),'utf8'));
   for(const id of Object.values(ids))await db.query('insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)',[id,id+'@example.test',{role:'admin',active:true,full_name:'Teste'}]);
   const initial=await db.query('select role,active from public.profiles');
   assert.ok(initial.rows.every(r=>r.role==='seller'&&!r.active),'Metadata cannot promote or activate a user');
@@ -48,5 +49,38 @@ test('PostgreSQL real: RLS separa vendedores, bloqueia promoção, acesso anôni
   await as('authenticated',ids.a);assert.equal((await db.query("select google_state from public.orders where id='a'")).rows[0].google_state,'sent');
   await db.exec('reset role');await db.query('update public.profiles set active=false where id=$1',[ids.a]);
   await as('authenticated',ids.a);assert.equal((await db.query('select * from public.orders')).rows.length,0);
+ }finally{await db.close();}
+});
+
+test('Trocar destino Google redefine só estados necessários; mudar nome mantém confirmação e dados dos pedidos',async()=>{
+ const db=new PGlite();
+ try{
+  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
+   create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
+   create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+   grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
+  const migrations=path.join(__dirname,'../supabase/migrations');
+  for(const file of fs.readdirSync(migrations).filter(name=>name.endsWith('.sql')).sort())await db.exec(fs.readFileSync(path.join(migrations,file),'utf8'));
+  await db.query('insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)',[ids.admin,'admin@example.test',{}]);
+  await db.query("update public.profiles set role='admin',active=true where id=$1",[ids.admin]);
+  for(const id of ['sent','failed','pending'])await db.query('insert into public.orders(id,owner_id,payload) values($1,$2,$3)',[id,ids.admin,order(id)]);
+  await db.exec("update public.orders set google_state='sent' where id='sent'; update public.orders set google_state='error',google_error='Sem confirmação' where id='failed';");
+  const before=(await db.query('select id,owner_id,payload,created_at,ctid::text as tuple from public.orders order by id')).rows;
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids.admin]);await db.exec('set role authenticated');
+  await db.query("update public.app_settings set google_script_url=$1,environment=$2 where id=true",['https://script.google.com/macros/s/first/exec','Teste']);
+  const reset=(await db.query('select id,google_state,google_error from public.orders order by id')).rows;
+  assert.ok(reset.every(row=>row.google_state==='not_sent'&&row.google_error===''));
+  await db.exec('reset role');
+  const after=(await db.query('select id,owner_id,payload,created_at,ctid::text as tuple from public.orders order by id')).rows;
+  for(const row of before){const current=after.find(next=>next.id===row.id);assert.deepEqual(current.payload,row.payload);assert.equal(current.owner_id,row.owner_id);assert.deepEqual(current.created_at,row.created_at);}
+  assert.equal(after.find(row=>row.id==='pending').tuple,before.find(row=>row.id==='pending').tuple,'A row already not_sent is not rewritten');
+  await db.exec("update public.orders set google_state='sent' where id='sent'; update public.app_settings set google_sheet_url='https://docs.google.com/spreadsheets/d/test/edit' where id=true;");
+  await db.exec('set role authenticated');
+  await db.query('update public.app_settings set environment=$1,google_auto_send=false where id=true',['Nome atualizado']);
+  assert.equal((await db.query("select google_state from public.orders where id='sent'")).rows[0].google_state,'sent');
+  assert.equal((await db.query('select public.workspace_settings() as data')).rows[0].data.google_sheet_url,'https://docs.google.com/spreadsheets/d/test/edit');
+  await db.query('update public.app_settings set google_script_url=$1 where id=true',['https://script.google.com/macros/s/second/exec']);
+  assert.equal((await db.query("select google_state from public.orders where id='sent'")).rows[0].google_state,'not_sent');
+  assert.equal((await db.query('select public.workspace_settings() as data')).rows[0].data.google_sheet_url,'');
  }finally{await db.close();}
 });
