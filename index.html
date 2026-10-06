@@ -7,11 +7,14 @@
   <title>DropTech · Central de pedidos</title>
   <link rel="icon" type="image/png" href="assets/droptech-logo.png?v=1">
   <link rel="apple-touch-icon" href="assets/droptech-logo.png?v=1">
-  <link rel="stylesheet" href="app.css?v=1">
+  <link rel="stylesheet" href="app.css?v=2">
   <link rel="stylesheet" href="order-print.css">
   <script src="order-tools.js"></script>
   <script src="order-pdf.js?v=2"></script>
   <script src="google-sync.js"></script>
+  <script src="backend-config.js?v=1"></script>
+  <script src="cloud-store.js?v=1"></script>
+  <script src="cloud-ui.js?v=1"></script>
 </head>
 <body>
 <div id="appContent">
@@ -20,10 +23,16 @@
     <div class="topbar-inner">
       <a class="brand" href="#novo-pedido" aria-label="DropTech — novo pedido"><img src="assets/droptech-logo.png?v=1" alt="Logo DropTech Mangueiras" width="48" height="48"><span><strong>DropTech</strong><small>MANGUEIRAS</small></span></a>
       <span class="workspace-name">Central de pedidos</span>
-      <nav aria-label="Navegação principal"><a href="#novo-pedido">Novo pedido</a><a href="#historico">Histórico</a><a href="#googleSettings" onclick="document.getElementById('googleSettings').open = true">Integração Google</a></nav>
+      <nav id="topbarNav" aria-label="Navegação principal"><a href="#novo-pedido">Novo pedido</a><a href="#historico">Histórico</a><a id="integrationNav" href="#googleSettings" onclick="document.getElementById('googleSettings').open = true">Integração Google</a></nav><div id="accountControls" class="account-controls" hidden><span><strong id="accountName"></strong><small id="accountRole"></small></span><button id="changePasswordButton" class="account-button" type="button">Senha</button><button id="logoutButton" class="account-button" type="button">Sair</button></div>
     </div>
   </header>
-  <main class="workspace">
+  <section id="authGate" class="auth-gate" hidden aria-labelledby="authTitle">
+    <div class="panel login-card"><p class="eyebrow">CENTRAL DE PEDIDOS</p><h1 id="authTitle">Bem-vindo à DropTech</h1><p>Entre na sua conta para acessar seus pedidos em qualquer dispositivo.</p>
+    <form id="loginForm"><div class="field"><label for="loginEmail">E-mail</label><input id="loginEmail" type="email" autocomplete="username" required></div><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button id="loginButton" class="button primary" type="submit">Entrar</button><button id="recoverButton" class="text-button" type="button">Esqueci minha senha</button></form>
+    <form id="passwordForm" hidden><div class="field"><label for="newPassword">Nova senha · pelo menos 12 caracteres</label><input id="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="200" required></div><button id="passwordButton" class="button primary" type="submit">Atualizar senha</button><button id="cancelPassword" class="text-button" type="button">Voltar</button></form><p id="authStatus" role="status"></p></div>
+  </section>
+  <main id="cloudWorkspace" class="workspace" hidden>
+    <div id="cloudDataBar" class="cloud-data-bar" hidden><p id="cloudStatus" role="status">Carregando os pedidos do banco…</p><button id="refreshOrders" type="button" class="button secondary">Atualizar pedidos</button></div>
     <div class="page-intro" id="novo-pedido"><div><p class="eyebrow">COMERCIAL / PEDIDOS</p><h1>Um novo pedido começa aqui.</h1><p>Do primeiro item ao fechamento. Tudo no mesmo lugar.</p></div><a class="history-shortcut" href="#historico">Consultar pedidos <span aria-hidden="true">↗</span></a></div>
     <form id="orderForm" class="order-layout">
       <section class="panel customer-panel" aria-label="Dados do cliente">
@@ -97,7 +106,7 @@
         </div>
         <div class="order-summary"><div><span>Itens adicionados</span><strong id="summaryItems">0 item(ns)</strong></div><div><span>Subtotal</span><strong id="summaryGross">R$ 0,00</strong></div><div><span>Desconto</span><strong id="summaryDiscount">− R$ 0,00</strong></div></div>
         <div class="total-box"><span>Total do pedido</span><strong id="finalGrandTotalDisplay">R$ 0,00</strong><small id="installmentDetailDisplay"></small></div>
-        <button type="submit" class="button primary save-order">Salvar pedido <span aria-hidden="true">→</span></button>
+        <button type="submit" id="saveOrderButton" class="button primary save-order">Salvar pedido <span aria-hidden="true">→</span></button>
         <p class="save-help">Depois de salvar, acesse o PDF no histórico.</p>
         <p id="orderSaveStatus" role="status"></p>
         <p id="googleEnvironmentStatus" class="connection-status"></p>
@@ -109,18 +118,22 @@
       <p class="selection-help">Marque os pedidos que deseja exportar. Sem seleção, será enviado todo o histórico, inclusive os pedidos fora da busca.</p>
       <label class="select-all"><input type="checkbox" id="selectVisibleOrders" onchange="selectVisibleOrders(this.checked)"> Selecionar todos os pedidos exibidos</label>
       <div class="history-table-wrap"><table class="history-table"><caption class="sr-only">Histórico de pedidos registrados</caption><thead><tr><th><span class="sr-only">Selecionar</span></th><th>Data / envio</th><th>Cliente / CNPJ</th><th>Responsável</th><th>Itens</th><th>Total final</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="salesTableBody"></tbody></table></div>
-      <div class="integration-section"><div class="integration-heading"><div><h3>Google Planilhas</h3><p>Conecte sua conta e acompanhe os envios.</p></div><div class="sync-actions"><button type="button" class="text-button" onclick="googleSync.retryPending()">Reenviar pendentes</button><button type="button" class="button secondary" onclick="authorizeGoogle()">Conectar ao Google</button><a id="googleSpreadsheetLink" href="#" target="_blank" rel="noopener" class="button secondary" hidden>Abrir planilha deste ambiente</a></div></div><p id="exportStatus" role="status"></p><details id="googleSettings">
+      <div class="integration-section"><div class="integration-heading"><div><h3>Google Planilhas</h3><p id="googleHelpText">Conecte sua conta e acompanhe os envios.</p></div><div class="sync-actions"><button type="button" class="text-button" onclick="retryGoogleOrders()">Reenviar pendentes</button><button id="sessionGoogleConnect" type="button" class="button secondary" onclick="authorizeGoogle()">Conectar ao Google</button><a id="googleSpreadsheetLink" href="#" target="_blank" rel="noopener" class="button secondary" hidden>Abrir planilha deste ambiente</a></div></div><p id="exportStatus" role="status"></p><details id="googleSettings">
                 <summary>Configurar Google Planilhas</summary>
-                <p>Configure o aplicativo na sua conta Google seguindo o <a href="GOOGLE-PLANILHAS.md" target="_blank" rel="noopener">guia de instalação</a>. Depois, cole a URL da implantação abaixo.</p>
+                <p>Configure o aplicativo na sua conta Google seguindo o <a id="googleSetupGuide" href="GOOGLE-PLANILHAS.md" target="_blank" rel="noopener">guia de instalação</a>. Depois, cole a URL da implantação abaixo.</p>
                 <label for="googleScriptUrl">URL do aplicativo Google (termina em /exec)</label>
                 <input type="url" id="googleScriptUrl" placeholder="https://script.google.com/macros/s/.../exec">
                 <label for="googleEnvironment">Nome do ambiente</label>
                 <input type="text" id="googleEnvironment" placeholder="Teste ou DropTech" maxlength="80">
                 <label><input type="checkbox" id="googleAutoSend" checked>Enviar automaticamente ao salvar novos pedidos</label>
                 <button type="button" onclick="saveGoogleSettings()">Salvar configuração</button>
-                <button type="button" onclick="authorizeGoogle()">Conectar ao Google</button>
-                <p>Conecte ao Google uma vez por sessão e mantenha a aba aberta para enviar novos pedidos automaticamente. Cada ambiente usa uma planilha contínua, com uma aba por pedido. Trocar a URL exige uma nova conexão; o histórico antigo só será enviado ao novo ambiente se você usar o botão manual.</p>
+                <button id="legacyGoogleConnect" type="button" onclick="authorizeGoogle()">Conectar ao Google</button>
+                <p id="legacyGoogleHelp">Conecte ao Google uma vez por sessão e mantenha a aba aberta para enviar novos pedidos automaticamente. Cada ambiente usa uma planilha contínua, com uma aba por pedido. Trocar a URL exige uma nova conexão; o histórico antigo só será enviado ao novo ambiente se você usar o botão manual.</p>
             </details></div>
+    </section>
+    <section id="adminPanel" class="panel admin-panel" hidden aria-labelledby="adminTitle"><p class="eyebrow">ADMINISTRAÇÃO</p><h2 id="adminTitle">Equipe de vendas</h2><p>Cadastre vendedores e controle quem pode acessar o sistema.</p><div id="usersList" class="users-list"></div>
+      <details><summary>Cadastrar vendedor</summary><form id="newSellerForm" class="new-seller-form"><div class="field"><label for="sellerName">Nome do vendedor</label><input id="sellerName" type="text" maxlength="120" required></div><div class="field"><label for="sellerEmail">E-mail</label><input id="sellerEmail" type="email" required></div><div class="field"><label for="sellerPassword">Senha temporária · mínimo 12 caracteres</label><input id="sellerPassword" type="password" autocomplete="new-password" minlength="12" maxlength="200" required></div><button id="createSellerButton" class="button primary" type="submit">Cadastrar vendedor</button></form></details>
+      <div id="migrationPanel" class="migration-panel" hidden><h3>Pedidos antigos deste navegador</h3><p><span id="legacyCount">0</span> pedido(s) encontrados. Escolha o responsável para importá-los no banco. A cópia local será mantida.</p><div class="field"><label for="migrationOwner">Vendedor responsável pelos pedidos importados</label><select id="migrationOwner"></select></div><button id="importLegacyButton" class="button secondary" type="button">Importar pedidos antigos</button></div><p id="adminStatus" role="status"></p>
     </section>
     <footer class="app-footer"><span>DropTech <span aria-hidden="true">·</span> Indústria e Comércio de Mangueiras</span><a href="#novo-pedido">Voltar ao novo pedido ↑</a></footer>
   </main>
@@ -137,8 +150,12 @@
     </dialog>
     <!-- Script JavaScript -->
     <script>
+        const cloudEnabled = !!window.DropTechBackend?.enabled;
+        const cloudStore = cloudEnabled ? CloudStore.create(window.DropTechBackend) : null;
+        let cloudUI = null;
+        let saveBusy = false, pendingCloudOrder = null, pendingCloudSignature = '';
         let currentCart = [];
-        let sales = loadSales();
+        let sales = cloudEnabled ? [] : loadSales();
         const selectedOrderIds = new Set();
         let previewOrder = null;
 
@@ -292,8 +309,12 @@
         }
 
         // Salvar Pedido Completo
-        document.getElementById('orderForm').addEventListener('submit', function(e) {
+        document.getElementById('orderForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            if (saveBusy) return;
+            if (cloudEnabled) {
+                try { cloudUI.requireAccount(); } catch(error) { alert(error.message); return; }
+            }
 
             if (currentCart.length === 0) {
                 alert('Adicione pelo menos um item ao pedido antes de finalizar.');
@@ -330,6 +351,34 @@
                 payment: paymentDescription
             };
 
+            if (cloudEnabled) {
+                const signature = JSON.stringify({...newOrder, id: undefined, createdAt: undefined, date: undefined});
+                if (pendingCloudOrder && signature !== pendingCloudSignature) {
+                    alert('Há uma tentativa de salvamento sem confirmação. Confira o histórico e tente salvar o mesmo pedido antes de alterar os dados.');
+                    return;
+                }
+                pendingCloudOrder ||= newOrder; pendingCloudSignature = signature;
+                saveBusy = true; document.getElementById('saveOrderButton').disabled = true;
+                document.getElementById('orderSaveStatus').textContent = 'Salvando o pedido no banco…';
+                const accountId = cloudUI.profile().id;
+                try {
+                    await cloudStore.saveOrder(pendingCloudOrder);
+                    const savedOrder = pendingCloudOrder;
+                    pendingCloudOrder = null; pendingCloudSignature = '';
+                    if (cloudUI.profile()?.id !== accountId) return;
+                    document.getElementById('orderForm').reset(); currentCart = [];
+                    toggleInstallments(); toggleCartMode(); renderCart();
+                    await cloudUI.reload({quiet:true});
+                    document.getElementById('orderSaveStatus').textContent = 'Pedido salvo no banco. Já pode ser consultado em outro aparelho com o mesmo login.';
+                    if (cloudUI.settings()?.google_auto_send && cloudUI.settings()?.google_configured) {
+                        try { await cloudUI.sync([savedOrder]); }
+                        catch { document.getElementById('orderSaveStatus').textContent = 'Pedido salvo no banco. O envio ao Google precisa ser reenviado pelo histórico.'; }
+                    }
+                } catch(error) {
+                    document.getElementById('orderSaveStatus').textContent = 'Não foi possível confirmar o salvamento: '+error.message+' O formulário foi mantido; tentar novamente não duplica o pedido.';
+                } finally { saveBusy = false; document.getElementById('saveOrderButton').disabled = false; }
+                return;
+            }
             try {
                 localStorage.setItem('droptech_sales_v3', JSON.stringify([...sales, newOrder]));
                 sales.push(newOrder);
@@ -348,8 +397,13 @@
             googleSync.enqueue([newOrder]);
         });
 
-        function deleteSale(index) {
+        async function deleteSale(index) {
             if (confirm('Deseja realmente excluir este pedido do histórico?')) {
+                if (cloudEnabled) {
+                    try { cloudUI.requireAccount(); await cloudStore.deleteOrder(sales[index].id); await cloudUI.reload(); }
+                    catch(error) { alert(error.message); }
+                    return;
+                }
                 const next = sales.filter((_, i) => i !== index);
                 try {
                     localStorage.setItem('droptech_sales_v3', JSON.stringify(next));
@@ -411,7 +465,7 @@
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td data-label="Selecionar pedido" class="p-3"><input type="checkbox" ${selectedOrderIds.has(sale.id) ? 'checked' : ''} aria-label="${e('Selecionar pedido de ' + sale.client)}"></td>
-                    <td data-label="Data e envio" class="p-3 text-xs">${e(sale.date)}<br><span class="text-[10px] text-slate-400 break-all">${e(OrderTools.orderNumber(sale))}</span><br><span class="text-[11px] text-blue-800" title="${e(googleSync.status(sale.id).error || '')}">${e(googleSync.labels(sale.id))}</span></td>
+                    <td data-label="Data e envio" class="p-3 text-xs">${e(sale.date)}${cloudEnabled && cloudUI?.profile()?.role === 'admin' ? '<br><strong>' + e(cloudUI.ownerName(sale.ownerId)) + '</strong>' : ''}<br><span class="text-[10px] text-slate-400 break-all">${e(OrderTools.orderNumber(sale))}</span><br><span class="text-[11px] text-blue-800" title="${e(cloudEnabled ? sale.googleError || '' : googleSync.status(sale.id).error || '')}">${e(cloudEnabled ? cloudUI?.label(sale) || 'Salvo no banco' : googleSync.labels(sale.id))}</span></td>
                     <td data-label="Cliente" class="p-3 font-medium"><strong>${e(sale.client)}</strong><br><span class="text-xs text-slate-500">CNPJ: ${e(sale.cnpj)}</span></td>
                     <td data-label="Responsável" class="p-3 text-xs"><strong>${e(sale.buyer)}</strong><br><span class="text-slate-500">Tel: ${e(sale.phone)}</span></td>
                     <td data-label="Itens" class="p-3 text-xs">${itemsListHtml}</td>
@@ -497,10 +551,15 @@
             }
         }
 
-        function saveGoogleSettings() {
+        async function saveGoogleSettings() {
             const url = document.getElementById('googleScriptUrl').value.trim();
             if (!OrderTools.validateGoogleUrl(url)) {
                 alert('Informe a URL da implantação do Google Apps Script: https://script.google.com/macros/s/.../exec');
+                return;
+            }
+            if (cloudEnabled) {
+                try { await cloudUI.saveSettings({google_script_url:url,environment:document.getElementById('googleEnvironment').value.trim()||'Teste',google_auto_send:document.getElementById('googleAutoSend').checked}); document.getElementById('googleSettings').open=false; }
+                catch(error) {document.getElementById('exportStatus').textContent=error.message;}
                 return;
             }
             try {
@@ -514,7 +573,8 @@
             }
         }
 
-        function exportToGoogleSheets() {
+        async function exportToGoogleSheets() {
+            if (cloudEnabled) {try {await cloudUI.sync(exportOrders());}catch(error){document.getElementById('exportStatus').textContent=error.message;} return;}
             const orders = exportOrders();
             if (!orders.length) { alert('Não há pedidos para exportar.'); return; }
             // A implantação é salva explicitamente para evitar enviar dados a uma URL não configurada.
@@ -532,7 +592,14 @@
             googleSync.enqueue(orders, true);
         }
 
+        function retryGoogleOrders() {
+            if (!cloudEnabled) {googleSync.retryPending();return;}
+            const pending = exportOrders().filter(order=>order.googleState!=='sent');
+            cloudUI.sync(pending).catch(error=>document.getElementById('exportStatus').textContent=error.message);
+        }
+
         function authorizeGoogle() {
+            if (cloudEnabled) return;
             const url = localStorage.getItem('droptech_google_script_url') || '';
             if (!OrderTools.validateGoogleUrl(url)) {
                 document.getElementById('googleSettings').open = true;
@@ -543,6 +610,7 @@
         }
 
         function openGoogleSend() {
+            if (cloudEnabled) return exportToGoogleSheets();
             const orders = exportOrders();
             if (orders.length > 100) {
                 document.getElementById('exportStatus').textContent = 'Selecione até 100 pedidos por envio.';
@@ -561,6 +629,7 @@
             isAutomatic: () => localStorage.getItem('droptech_google_auto_send') !== 'false',
             getOrders: () => sales,
             onChange(message) {
+                if (cloudEnabled) return;
                 document.getElementById('exportStatus').textContent = message;
                 const label = localStorage.getItem('droptech_google_environment') || 'Teste';
                 const configured = OrderTools.validateGoogleUrl(localStorage.getItem('droptech_google_script_url') || '');
@@ -576,7 +645,23 @@
                 renderSalesHistory();
             }
         });
-        googleSync.start();
+        if (cloudEnabled) {
+            document.getElementById('cloudDataBar').hidden=false;
+            let legacyOrders=[];
+            try {legacyOrders=loadSales();}catch {} // Broken legacy storage must not prevent cloud login.
+            cloudUI = CloudUI.start({store:cloudStore,getSales:()=>sales,
+                setSales(orders){sales=orders;for(const id of selectedOrderIds)if(!orders.some(order=>order.id===id))selectedOrderIds.delete(id);},
+                resetDraft(){currentCart=[];pendingCloudOrder=null;pendingCloudSignature='';previewOrder=null;document.getElementById('printOrder').innerHTML='';document.getElementById('orderForm').reset();renderCart();},
+                hasDraft:()=>currentCart.length>0||!!document.getElementById('clientName').value,
+                render:renderSalesHistory,legacyOrders});
+        } else if (window.DropTechBackend || !window.document) {
+            document.getElementById('cloudWorkspace').hidden=false;
+            googleSync.start();
+        } else {
+            document.getElementById('authGate').hidden=false;
+            document.getElementById('loginButton').disabled=true;
+            document.getElementById('authStatus').textContent='A configuração do banco não foi carregada. Recarregue a página ou contate o administrador.';
+        }
 
         renderSalesHistory();
     </script>

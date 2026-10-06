@@ -105,6 +105,7 @@ module.exports = function googleContext() {
         LockService: { getScriptLock: () => ({ waitLock() { if (held) throw new Error('Bloqueio ocupado'); held = true; mock.lockEvents.push('acquired'); },
             hasLock: () => held, releaseLock() { held = false; mock.lockEvents.push('released'); } }) },
         Utilities: { formatDate: () => '05-10-2026 14:30:00' },
+        ContentService: { MimeType: {JSON:'application/json'}, createTextOutput: text=>({text,setMimeType(value){this.mime=value;return this;}}) },
         HtmlService: { XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' }, createHtmlOutput: html => ({ html, setTitle() { return this; }, setXFrameOptionsMode(mode) { this.mode = mode; return this; } }) }
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'google-apps-script.gs'), 'utf8'), context);

@@ -4,6 +4,7 @@
  * Mantém uma planilha por projeto e confirma o envio para a aplicação local.
  */
 function doGet(e) {
+    if (serverMode_()) return resultPage_('DropTech — integração do servidor', 'Os pedidos são enviados pelo sistema autenticado. A consulta está disponível no painel do administrador.', '');
     if (e && e.parameter && e.parameter.bridge === '2') return connectionPage_(e.parameter);
     try {
         var id = PropertiesService.getScriptProperties().getProperty('DROPTECH_SPREADSHEET_ID');
@@ -19,6 +20,7 @@ function doGet(e) {
 }
 
 function doPost(e) {
+    if (serverMode_()) return serverPost_(e);
     var payload;
     try {
         if (!e || !e.parameter || !e.parameter.payload) throw new Error('Nenhum pedido recebido.');
@@ -38,6 +40,8 @@ function syncOrders(payload) {
     var spreadsheet;
     var lock;
     try {
+        if (serverMode_() && (!payload || payload.serverToken !== PropertiesService.getScriptProperties().getProperty('DROPTECH_SERVER_TOKEN')))
+            throw new Error('Envio não autorizado.');
         if (JSON.stringify(payload).length > 2000000) throw new Error('Envio muito grande. Selecione menos pedidos.');
         validatePayload_(payload);
         if (payload.requestId && !/^[a-zA-Z0-9-]{1,80}$/.test(payload.requestId)) throw new Error('Identificação de envio inválida.');
@@ -124,8 +128,25 @@ function syncOrders(payload) {
 }
 
 function getConnectionInfo() {
+    if (serverMode_()) throw new Error('Consulta disponível somente no sistema autenticado.');
     var id = PropertiesService.getScriptProperties().getProperty('DROPTECH_SPREADSHEET_ID');
     return { spreadsheetUrl: id ? SpreadsheetApp.openById(id).getUrl() : '' };
+}
+
+// In cloud mode, only the Supabase function knows this token. It must never be in the site code.
+function serverMode_() { return !!PropertiesService.getScriptProperties().getProperty('DROPTECH_SERVER_TOKEN'); }
+function serverPost_(e) {
+    var result;
+    try {
+        var expected = PropertiesService.getScriptProperties().getProperty('DROPTECH_SERVER_TOKEN');
+        if (!expected || expected.length < 32) throw new Error('Token do servidor não configurado corretamente.');
+        if (!e || !e.postData || e.postData.contents.length > 2000000) throw new Error('Requisição inválida.');
+        var body = JSON.parse(e.postData.contents);
+        if (body.serverToken !== expected) throw new Error('Envio não autorizado.');
+        body.payload.serverToken = expected;
+        result = syncOrders(body.payload);
+    } catch (error) { result = { ok: false, message: String(error.message || error), orderIds: [] }; }
+    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function connectionPage_(parameters) {

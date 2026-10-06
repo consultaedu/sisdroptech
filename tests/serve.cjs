@@ -2,7 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const files = new Set(['index.html', 'app.css', 'assets/droptech-logo.png', 'order-tools.js', 'order-pdf.js', 'vendor/pdf-lib-1.17.1.min.js', 'google-sync.js', 'order-print.css', 'GOOGLE-PLANILHAS.md']);
+const files = new Set(['index.html', 'app.css', 'backend-config.js', 'cloud-store.js', 'cloud-ui.js', 'assets/droptech-logo.png', 'order-tools.js', 'order-pdf.js', 'vendor/pdf-lib-1.17.1.min.js', 'google-sync.js', 'order-print.css', 'GOOGLE-PLANILHAS.md']);
 http.createServer((req, res) => {
     if (req.url === '/print-preview') {
         const tools = require('../order-tools.js');

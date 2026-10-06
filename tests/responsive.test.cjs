@@ -8,6 +8,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     const page = await browser.newPage({viewport:{width:1440,height:1000}});
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
+    // Exercise the retained local migration/legacy mode without contacting a live backend.
+    await page.route('**/backend-config.js*', route=>route.fulfill({contentType:'application/javascript',body:'window.DropTechBackend={enabled:false};'}));
     await page.goto('http://127.0.0.1:4173');
     await page.locator('#clientName').fill('Comercial Jardim · Demonstração');
     await page.locator('#clientCnpj').fill('00.000.000/0001-00');
