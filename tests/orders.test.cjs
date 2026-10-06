@@ -700,3 +700,17 @@ test('Página publicada solicita o gerador completo com versão para renovar o c
     assert.equal(html.includes('src="vendor/pdf-lib-1.17.1.min.js"'), false);
     assert.ok(fs.readFileSync(path.join(root, 'order-pdf.js'), 'utf8').includes('root.PDFLib = module.exports;'));
 });
+
+test('Logo e favicon usam uma imagem PNG local válida, sem tentativas externas em ciclo', () => {
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    const logo = html.match(/<img\b[^>]*alt="Logo DropTech Mangueiras"[^>]*>/)[0];
+    const logoSrc = logo.match(/src="([^"]+)"/)[1];
+    const iconSrc = html.match(/<link\b[^>]*rel="icon"[^>]*href="([^"]+)"/)[1];
+    assert.equal(logoSrc, iconSrc);
+    assert.ok(!/^https?:/.test(logoSrc));
+    assert.equal(logo.includes('onerror='), false);
+    assert.equal(html.includes('via.placeholder.com'), false);
+    const image = fs.readFileSync(path.join(root, logoSrc.split('?')[0]));
+    assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.equal(image.readUInt32BE(16), image.readUInt32BE(20));
+});

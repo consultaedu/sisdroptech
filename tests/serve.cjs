@@ -2,7 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const files = new Set(['index.html', 'order-tools.js', 'order-pdf.js', 'vendor/pdf-lib-1.17.1.min.js', 'google-sync.js', 'order-print.css', 'GOOGLE-PLANILHAS.md']);
+const files = new Set(['index.html', 'assets/droptech-logo.png', 'order-tools.js', 'order-pdf.js', 'vendor/pdf-lib-1.17.1.min.js', 'google-sync.js', 'order-print.css', 'GOOGLE-PLANILHAS.md']);
 http.createServer((req, res) => {
     if (req.url === '/print-preview') {
         const tools = require('../order-tools.js');
@@ -18,7 +18,7 @@ http.createServer((req, res) => {
     }
     const filename = req.url.split('?')[0] === '/' ? 'index.html' : decodeURIComponent(req.url.split('?')[0].slice(1));
     if (!files.has(filename)) { res.writeHead(404); res.end('Não encontrado'); return; }
-    const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.md': 'text/plain' };
+    const types = { '.png': 'image/png', '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.md': 'text/plain' };
     res.setHeader('Content-Type', (types[path.extname(filename)] || 'text/plain') + '; charset=utf-8');
     fs.createReadStream(path.join(root, filename)).pipe(res);
 }).listen(4173, '127.0.0.1', () => console.log('Prévia: http://localhost:4173'));
