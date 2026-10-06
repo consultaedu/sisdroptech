@@ -667,3 +667,36 @@ test('PDF A4 abre com dados e metadados do pedido e quebra páginas para muitos 
     assert.ok(largeDocument.getPageCount() > 1);
     assert.equal(orderPdf.filename(order({ client: '../Comércio São José: filial / teste' })), 'DT-TESTORDER1-Comercio-Sao-Jose-filial-teste.pdf');
 });
+
+test('Gerador funciona no navegador sem carregar a biblioteca por um script separado', async () => {
+    const context = vm.createContext({ console, setTimeout, clearTimeout });
+    vm.runInContext('window = this; self = this;', context);
+    vm.runInContext(fs.readFileSync(path.join(root, 'order-tools.js'), 'utf8'), context);
+    assert.equal(context.PDFLib, undefined);
+    vm.runInContext(fs.readFileSync(path.join(root, 'order-pdf.js'), 'utf8'), context);
+    assert.equal(typeof context.PDFLib.PDFDocument.create, 'function');
+    context.sampleOrder = order();
+    const bytes = await vm.runInContext('OrderPdf.build(sampleOrder)', context);
+    const pdf = await pdfLibrary.PDFDocument.load(Buffer.from(bytes));
+    assert.equal(pdf.getPageCount(), 1);
+    assert.equal(pdf.getTitle(), 'DT-TESTORDER1 - Comércio São José');
+});
+
+test('Biblioteca incorporada não perde o global PDFLib quando há AMD ou CommonJS na página', async () => {
+    const context = vm.createContext({ console, setTimeout, clearTimeout,
+        exports: {}, module: { exports: {} }, define() { throw new Error('O carregador AMD não deve capturar a biblioteca'); } });
+    context.define.amd = true;
+    vm.runInContext('window = this; self = this;', context);
+    vm.runInContext(fs.readFileSync(path.join(root, 'order-tools.js'), 'utf8'), context);
+    vm.runInContext(fs.readFileSync(path.join(root, 'order-pdf.js'), 'utf8'), context);
+    context.sampleOrder = order();
+    const bytes = await vm.runInContext('OrderPdf.build(sampleOrder)', context);
+    assert.equal(Buffer.from(bytes.subarray(0, 5)).toString(), '%PDF-');
+});
+
+test('Página publicada solicita o gerador completo com versão para renovar o cache', () => {
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.ok(html.includes('src="order-pdf.js?v=2"'));
+    assert.equal(html.includes('src="vendor/pdf-lib-1.17.1.min.js"'), false);
+    assert.ok(fs.readFileSync(path.join(root, 'order-pdf.js'), 'utf8').includes('root.PDFLib = module.exports;'));
+});

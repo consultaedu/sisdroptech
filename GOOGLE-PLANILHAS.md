@@ -74,7 +74,7 @@ A guia **Consulta de pedidos** tem filtros de Cliente, CNPJ, Data e outros campo
 
 Cada guia inclui identificação, data, cliente, CNPJ, inscrição estadual, responsável, telefone, produtos, composição dos rolos, metragem, preços, desconto, pagamento e total. A seleção e os filtros são preservados nos próximos envios. Não apague a guia oculta **_DropTech controle**, que mantém a identificação dos pedidos e permite retomar envios parciais.
 
-No histórico do sistema, clique em **PDF** no pedido e depois **Salvar em PDF**. O arquivo A4 é gerado e baixado diretamente, inclui apenas aquele pedido e funciona sem conexão ao Google. Pedidos com muitos itens são divididos em páginas, com cabeçalhos e numeração. A biblioteca usada fica na própria pasta do sistema, sem depender de uma CDN.
+No histórico do sistema, clique em **PDF** no pedido e depois **Salvar em PDF**. O arquivo A4 é gerado e baixado diretamente, inclui apenas aquele pedido e funciona sem conexão ao Google. Pedidos com muitos itens são divididos em páginas, com cabeçalhos e numeração. O arquivo order-pdf.js já contém a biblioteca necessária, sem depender de um script separado ou de uma CDN.
 
 O botão separado **Imprimir** usa a janela de impressão do navegador. Se o navegador ou visualizador embutido não permitir essa janela, clique em **Salvar em PDF**, abra o arquivo baixado e imprima pelo leitor de PDF. Na janela de impressão do navegador, desative cabeçalhos e rodapés se desejar omitir URL e data.
 
@@ -85,3 +85,7 @@ Os pedidos permanecem em `droptech_sales_v3`; a fila em `droptech_google_sync_v1
 Para publicar o site, mantenha juntos `index.html`, `order-tools.js`, `order-pdf.js`, `google-sync.js`, `order-print.css` e a pasta `vendor` (biblioteca PDF e licença). A aplicação aceita até 100 pedidos por ação manual e até 500 itens por pedido. As correções de congelamento e dos separadores de fórmulas para a localidade brasileira continuam incluídas.
 
 Referências: [Aplicativos da Web](https://developers.google.com/apps-script/guides/web), [comunicação nativa com o servidor](https://developers.google.com/apps-script/guides/html/communication), [restrições do serviço HTML](https://developers.google.com/apps-script/guides/html/restrictions) e [propriedades do projeto](https://developers.google.com/apps-script/reference/properties/properties-service).
+
+## Manutenção do gerador de PDF
+
+O arquivo order-pdf.js é gerado e contém a biblioteca e o código do pedido. Para alterar o gerador, edite order-pdf.source.js e execute node scripts/build-pdf.cjs. Publique o novo order-pdf.js e index.html juntos. A referência com versão no HTML renova o cache após esta correção.
