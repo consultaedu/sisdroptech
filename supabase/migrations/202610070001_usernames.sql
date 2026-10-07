@@ -48,6 +48,7 @@ create table private.username_login_attempts (
   window_start timestamptz not null,
   attempts integer not null
 );
+alter table private.username_login_attempts enable row level security;
 revoke all on private.username_login_attempts from public,anon,authenticated;
 create function public.reserve_username_login(account_id uuid) returns boolean
 language plpgsql security definer set search_path='' as $$

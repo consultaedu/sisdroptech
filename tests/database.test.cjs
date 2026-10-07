@@ -23,6 +23,9 @@ test('Migração de usuários preserva contas e pedidos, resolve nomes repetidos
   await db.exec(fs.readFileSync(path.join(migrations,'202610070001_usernames.sql'),'utf8'));
   assert.deepEqual((await db.query('select id,email,role,active,full_name,created_at from public.profiles order by id')).rows,before);
   assert.deepEqual((await db.query('select * from public.orders')).rows,oldOrders);
+  assert.equal((await db.query("select relrowsecurity from pg_class where oid='private.username_login_attempts'::regclass")).rows[0].relrowsecurity,true);
+  await db.exec(fs.readFileSync(path.join(migrations,'202610070002_usernames_rls.sql'),'utf8'));
+  await db.exec(fs.readFileSync(path.join(migrations,'202610070002_usernames_rls.sql'),'utf8'));
   assert.deepEqual((await db.query('select username from public.profiles order by id')).rows.map(r=>r.username),['vendedor','vendedor_2','usuario_x']);
   await assert.rejects(()=>db.query("update public.profiles set username='vendedor' where id=$1",[ids.a]),/unique constraint/);
   await assert.rejects(()=>db.query("update public.profiles set username='VENDEDOR' where id=$1",[ids.a]),/check constraint/);
@@ -35,7 +38,11 @@ test('Migração de usuários preserva contas e pedidos, resolve nomes repetidos
   await db.exec('reset role');await db.exec('set role service_role');
   for(let i=0;i<10;i++)assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,true);
   assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,false);
-  await db.exec('reset role');await db.exec("update private.username_login_attempts set window_start=now()-interval '2 minutes'");
+  await db.exec('reset role');
+  // RLS continues denying browser roles even if table privileges are granted accidentally.
+  await db.exec('grant usage on schema private to authenticated,anon; grant select,insert on private.username_login_attempts to authenticated,anon');
+  for(const role of ['authenticated','anon']){await db.exec('set role '+role);assert.equal((await db.query('select * from private.username_login_attempts')).rows.length,0);await assert.rejects(()=>db.query('insert into private.username_login_attempts values($1,now(),1)',[ids.a]),/row-level security/);await db.exec('reset role');}
+  await db.exec("update private.username_login_attempts set window_start=now()-interval '2 minutes'");
   await db.exec('set role service_role');assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,true);
   await db.exec('reset role');await db.query('insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)',[ids.off,'new@example.test',{username:'VENDEDOR01',role:'admin',active:true}]);
   const newAccount=(await db.query('select username,role,active from public.profiles where id=$1',[ids.off])).rows[0];

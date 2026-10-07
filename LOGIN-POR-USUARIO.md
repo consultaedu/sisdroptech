@@ -12,6 +12,10 @@ Copie todo o conteúdo de:
 
 Cole no editor e clique em **Run**. Execute esse arquivo somente uma vez. Não execute novamente os arquivos de instalação inicial.
 
+Se o painel mostrar um aviso sobre RLS, escolha **Run and enable RLS**. O arquivo atualizado já habilita essa proteção explicitamente.
+
+Se você já executou a versão anterior, execute somente `supabase/migrations/202610070002_usernames_rls.sql`. Não execute novamente a migração que cria os nomes de usuário.
+
 O resultado esperado é **Success. No rows returned**. Cada conta receberá um usuário baseado na parte anterior ao @ do e-mail, em letras minúsculas. Quando houver nomes repetidos, será acrescentado um número.
 
 ## 2. Atualizar a função do servidor
