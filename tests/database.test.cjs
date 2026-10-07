@@ -6,6 +6,42 @@ const path=require('node:path');
 const {PGlite}=require(process.env.PGLITE_MODULE||'@electric-sql/pglite');
 const ids={admin:'00000000-0000-0000-0000-000000000001',a:'00000000-0000-0000-0000-000000000002',b:'00000000-0000-0000-0000-000000000003',off:'00000000-0000-0000-0000-000000000004'};
 const order=id=>({id,date:'06/10/2026 10:00',client:'Cliente teste',cnpj:'00.000.000/0001-00',ie:'Isento',buyer:'Pessoa teste',phone:'27999999999',payment:'Pix à Vista',items:[{product:'Mangueira',detail:'50m',meters:50,unitPrice:2,subtotal:100}],gross:100,discountPct:10,discountVal:10,final:90});
+test('Migração de usuários preserva contas e pedidos, resolve nomes repetidos e limita tentativas somente no servidor',async()=>{
+ const db=new PGlite();
+ try{
+  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
+   create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb);
+   create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+   grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
+  const migrations=path.join(__dirname,'../supabase/migrations');
+  for(const file of fs.readdirSync(migrations).filter(name=>name.endsWith('.sql')&&!name.includes('usernames')).sort())await db.exec(fs.readFileSync(path.join(migrations,file),'utf8'));
+  for(const [id,email] of [[ids.admin,'Vendedor@example.test'],[ids.a,'vendedor@other.test'],[ids.b,'x@example.test']])await db.query('insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)',[id,email,{full_name:'Original',role:'admin',active:true}]);
+  await db.query("update public.profiles set role='admin',active=true where id=$1",[ids.admin]);
+  await db.query('insert into public.orders(id,owner_id,payload) values($1,$2,$3)',['old',ids.admin,order('old')]);
+  const before=(await db.query('select id,email,role,active,full_name,created_at from public.profiles order by id')).rows;
+  const oldOrders=(await db.query('select * from public.orders')).rows;
+  await db.exec(fs.readFileSync(path.join(migrations,'202610070001_usernames.sql'),'utf8'));
+  assert.deepEqual((await db.query('select id,email,role,active,full_name,created_at from public.profiles order by id')).rows,before);
+  assert.deepEqual((await db.query('select * from public.orders')).rows,oldOrders);
+  assert.deepEqual((await db.query('select username from public.profiles order by id')).rows.map(r=>r.username),['vendedor','vendedor_2','usuario_x']);
+  await assert.rejects(()=>db.query("update public.profiles set username='vendedor' where id=$1",[ids.a]),/unique constraint/);
+  await assert.rejects(()=>db.query("update public.profiles set username='VENDEDOR' where id=$1",[ids.a]),/check constraint/);
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids.admin]);await db.exec('set role authenticated');
+  assert.equal((await db.query('select public.workspace_settings() as settings')).rows[0].settings.username_login,true);
+  await assert.rejects(()=>db.query("update public.profiles set username='outro' where id=$1",[ids.admin]),/permission denied/);
+  await assert.rejects(()=>db.query('select public.reserve_username_login($1)',[ids.admin]),/permission denied/);
+  await db.exec('reset role');await db.exec('set role anon');
+  await assert.rejects(()=>db.query('select public.reserve_username_login($1)',[ids.admin]),/permission denied/);
+  await db.exec('reset role');await db.exec('set role service_role');
+  for(let i=0;i<10;i++)assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,true);
+  assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,false);
+  await db.exec('reset role');await db.exec("update private.username_login_attempts set window_start=now()-interval '2 minutes'");
+  await db.exec('set role service_role');assert.equal((await db.query('select public.reserve_username_login($1) as allowed',[ids.admin])).rows[0].allowed,true);
+  await db.exec('reset role');await db.query('insert into auth.users(id,email,raw_user_meta_data) values($1,$2,$3)',[ids.off,'new@example.test',{username:'VENDEDOR01',role:'admin',active:true}]);
+  const newAccount=(await db.query('select username,role,active from public.profiles where id=$1',[ids.off])).rows[0];
+  assert.deepEqual(newAccount,{username:'vendedor01',role:'seller',active:false});
+ }finally{await db.close();}
+});
 test('PostgreSQL real: RLS separa vendedores, bloqueia promoção, acesso anônimo e conta inativa; admin vê tudo',async()=>{
  const db=new PGlite();
  try {

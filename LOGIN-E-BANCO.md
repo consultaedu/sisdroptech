@@ -45,12 +45,12 @@ cadastrados pelo administrador, usando a função do servidor.
 
 Em **Authentication → URL Configuration**, use:
 
-- Site URL: `https://consultaedu.github.io/sisdroptech/`
-- Redirect URL: `https://consultaedu.github.io/sisdroptech/`
+- Site URL: `https://pedidos.droptech.com.br/`
+- Redirect URL: `https://pedidos.droptech.com.br/`
 
 Para desenvolvimento local, pode adicionar `http://127.0.0.1:4173/`.
 Configure um provedor SMTP para o ambiente oficial, conforme a documentação do Supabase.
-Configure a política de senha com pelo menos 12 caracteres. Não coloque senhas no repositório.
+Configure a política de senha com pelo menos 6 caracteres. Não coloque senhas no repositório.
 
 ## 4. Instalar a função de administração e Google
 
@@ -64,7 +64,7 @@ Os secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` sã
 pelo ambiente Supabase. Adicione o secret:
 
 ```
-APP_ORIGINS=https://consultaedu.github.io
+APP_ORIGINS=https://pedidos.droptech.com.br
 ```
 
 O Origin contém apenas domínio e protocolo, sem `/sisdroptech/`.
@@ -76,7 +76,7 @@ Com a CLI Supabase instalada, a alternativa é:
 ```sh
 supabase link --project-ref ihrwhfmsnclbusjdatiy
 supabase db push
-supabase secrets set APP_ORIGINS=https://consultaedu.github.io
+supabase secrets set APP_ORIGINS=https://pedidos.droptech.com.br
 supabase functions deploy droptech-api --no-verify-jwt
 ```
 
@@ -161,3 +161,6 @@ Os testes do banco exigem `@electric-sql/pglite`; a variável `PGLITE_MODULE` po
 uma instalação externa. Os de navegador exigem `playwright`; configure `PLAYWRIGHT_MODULE`
 e opcionalmente `BROWSER_EXECUTABLE`. Esses testes usam dados fictícios e serviços simulados.
 Eles não substituem a validação real depois da instalação no Supabase e Google.
+
+
+Para ativar o login por nome de usuário no projeto existente, siga [LOGIN-POR-USUARIO.md](LOGIN-POR-USUARIO.md). O novo arquivo SQL acrescenta os nomes às contas existentes e mantém pedidos e senhas.

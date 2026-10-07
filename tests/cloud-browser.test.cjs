@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');const path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
-const accounts=[{id:'admin',email:'admin@example.test',full_name:'Administrador teste',role:'admin',active:true},{id:'a',email:'a@example.test',full_name:'Vendedor A',role:'seller',active:true},{id:'b',email:'b@example.test',full_name:'Vendedor B',role:'seller',active:true}];
-const orders=[];const settings={environment:'Teste',google_auto_send:false,google_configured:false,google_script_url:'',google_sheet_url:''};
+const accounts=[{id:'admin',email:'admin@example.test',username:'administrador',full_name:'Administrador teste',role:'admin',active:true},{id:'a',email:'a@example.test',username:'vendedor01',full_name:'Vendedor A',role:'seller',active:true},{id:'b',email:'b@example.test',username:'vendedor02',full_name:'Vendedor B',role:'seller',active:true}];
+const orders=[];const settings={environment:'Teste',google_auto_send:false,google_configured:false,google_script_url:'',google_sheet_url:'',username_login:true};let recovered;
 const base='https://test.supabase.co';
 (async()=>{
  const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})});
@@ -13,7 +13,9 @@ const base='https://test.supabase.co';
   await page.route(base+'/**',async route=>{
    const req=route.request(),url=new URL(req.url()),body=req.postData()?JSON.parse(req.postData()):{},token=(req.headers().authorization||'').replace('Bearer ',''),account=accounts.find(u=>u.id===token),reply=(data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'},body:JSON.stringify(data)});
    if(req.method()==='OPTIONS')return reply({});
-   if(url.pathname==='/auth/v1/token'){const a=accounts.find(u=>u.email===body.email);return a?reply({access_token:a.id,refresh_token:a.id,expires_in:3600}):reply({message:'Invalid login credentials'},400);}
+   if(url.pathname==='/auth/v1/token'){const a=accounts.find(u=>u.email===body.email);return a&&body.password==='SenhaFicticia123!'?reply({access_token:a.id,refresh_token:a.id,expires_in:3600}):reply({message:'Invalid login credentials'},400);}
+   if(url.pathname==='/auth/v1/recover'){recovered={email:body.email,redirect:url.searchParams.get('redirect_to')};return reply({});}
+   if(url.pathname==='/functions/v1/droptech-api'&&body.action==='login'){const a=accounts.find(u=>u.username===body.username&&u.active);return a&&body.password==='SenhaFicticia123!'?reply({access_token:a.id,refresh_token:a.id,expires_in:3600}):reply({message:'Usuário ou senha inválidos.'},400);}
    if(url.pathname==='/auth/v1/logout')return reply({});
    if(!account)return reply({message:'Sem sessão'},401);
    if(url.pathname==='/auth/v1/user')return reply({id:account.id});
@@ -28,7 +30,8 @@ const base='https://test.supabase.co';
     return reply(id?visible.filter(o=>o.id===id):visible);
    }
    if(url.pathname==='/functions/v1/droptech-api'){
-    if(body.action==='create_seller'&&account.role==='admin'){const u={id:'new',email:body.email,full_name:body.name,role:'seller',active:true};accounts.push(u);return reply({message:'Vendedor cadastrado',id:u.id});}
+    if(body.action==='create_seller'&&account.role==='admin'){const u={id:'new',email:body.email,username:body.username,full_name:body.name,role:'seller',active:true};accounts.push(u);return reply({message:'Vendedor cadastrado',id:u.id});}
+    if(body.action==='set_username'&&account.role==='admin'){const u=accounts.find(u=>u.id===body.id);u.username=body.username.trim().toLowerCase();return reply({message:'Nome de usuário atualizado',username:u.username});}
     if(body.action==='set_seller_active'&&account.role==='admin'){accounts.find(u=>u.id===body.id).active=body.active;return reply({message:'Acesso atualizado'});}
     return reply({message:'Sem permissão'},403);
    }
@@ -38,19 +41,24 @@ const base='https://test.supabase.co';
  }
  async function login(page,email){await page.locator('#loginEmail').fill(email);await page.locator('#loginPassword').fill('SenhaFicticia123!');await page.locator('#loginButton').click();await page.locator('#cloudWorkspace').waitFor({state:'visible'});}
  try{
-  const pc=await device();await login(pc,'a@example.test');assert.ok(!await pc.locator('#adminPanel').isVisible());assert.ok(!await pc.locator('#googleSettings').isVisible());
+  const pc=await device();await login(pc,'VENDEDOR01');assert.ok(!await pc.locator('#adminPanel').isVisible());assert.ok(!await pc.locator('#googleSettings').isVisible());
   await pc.locator('#clientName').fill('Comprador compartilhado');await pc.locator('#clientCnpj').fill('00.000.000/0001-00');await pc.locator('#buyerName').fill('Pessoa teste');await pc.locator('#buyerPhone').fill('27999999999');await pc.locator('#itemProduct').selectOption({index:1});await pc.locator('#itemMeters').fill('50');await pc.getByRole('button',{name:'Adicionar item'}).click();await pc.locator('#saveOrderButton').click();await pc.locator('#salesTableBody').getByText('Comprador compartilhado',{exact:true}).waitFor();
-  const phone=await device(390);await login(phone,'a@example.test');await phone.locator('#salesTableBody').getByText('Comprador compartilhado',{exact:true}).waitFor();assert.equal(await phone.locator('#salesTableBody tr').count(),1);
-  const sellerB=await device(320);await login(sellerB,'b@example.test');assert.ok(!(await sellerB.locator('#salesTableBody').innerText()).includes('Comprador compartilhado'));
+  const phone=await device(390);await login(phone,'vendedor01');await phone.locator('#salesTableBody').getByText('Comprador compartilhado',{exact:true}).waitFor();assert.equal(await phone.locator('#salesTableBody tr').count(),1);
+  const sellerB=await device(320);await login(sellerB,'vendedor02');assert.ok(!(await sellerB.locator('#salesTableBody').innerText()).includes('Comprador compartilhado'));
   const admin=await device(390);await login(admin,'admin@example.test');await admin.locator('#usersList').getByText('Vendedor A',{exact:false}).waitFor();assert.match(await admin.locator('#salesTableBody').innerText(),/Vendedor A/);
   for(const p of [pc,phone,sellerB,admin])assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Cloud page overflow');
   const downloadPromise=phone.waitForEvent('download');await phone.getByRole('button',{name:'Ver / PDF'}).click();await phone.locator('#savePdfButton').click();assert.match((await downloadPromise).suggestedFilename(),/\.pdf$/);await phone.getByRole('button',{name:'Fechar',exact:true}).click();
-  await admin.getByText('Cadastrar vendedor',{exact:true}).first().click();await admin.locator('#sellerName').fill('Vendedor C');await admin.locator('#sellerEmail').fill('c@example.test');await admin.locator('#sellerPassword').fill('SenhaFicticia123!');await admin.locator('#createSellerButton').click();await admin.locator('#usersList').getByText('Vendedor C',{exact:false}).waitFor();
+  await admin.getByText('Cadastrar vendedor',{exact:true}).first().click();await admin.locator('#sellerName').fill('Vendedor C');await admin.locator('#sellerUsername').fill('vendedor03');await admin.locator('#sellerEmail').fill('c@example.test');await admin.locator('#sellerPassword').fill('1234');assert.equal(await admin.locator('#sellerPassword').evaluate(el=>el.checkValidity()),false);await admin.locator('#sellerPassword').fill('123456');await admin.locator('#createSellerButton').click();await admin.locator('#usersList').getByText('Vendedor C',{exact:false}).waitFor();
+  const rowB=admin.locator('.user-row').filter({hasText:'Vendedor B'});await rowB.locator('input').fill('vendedor04');await rowB.getByRole('button',{name:'Salvar usuário'}).click();await admin.locator('#adminStatus').getByText('Nome de usuário atualizado',{exact:true}).waitFor();
+  await admin.setViewportSize({width:320,height:900});assert.ok(await admin.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Admin username form overflow at 320px');await admin.setViewportSize({width:390,height:900});
   if(process.env.SCREENSHOT_DIR){await admin.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'admin-mobile.png'),fullPage:true});}
   await admin.locator('.user-row').filter({hasText:'Vendedor A'}).getByRole('button',{name:'Desativar'}).click();await admin.locator('#adminStatus').getByText('Acesso atualizado',{exact:true}).waitFor();
   await phone.locator('#refreshOrders').click();await phone.locator('#authGate').waitFor({state:'visible'});assert.ok(!await phone.locator('#cloudWorkspace').isVisible());assert.ok(!(await phone.locator('#salesTableBody').innerText()).includes('Comprador compartilhado'));
-  await sellerB.locator('#logoutButton').click();await sellerB.locator('#authGate').waitFor({state:'visible'});await sellerB.reload();assert.ok(!await sellerB.locator('#cloudWorkspace').isVisible());
+  await sellerB.locator('#logoutButton').click();await sellerB.locator('#authGate').waitFor({state:'visible'});await sellerB.reload();await sellerB.locator('#loginForm').waitFor({state:'visible'});assert.ok(!await sellerB.locator('#cloudWorkspace').isVisible());assert.equal(await sellerB.locator('#loginEmail').inputValue(),'vendedor02');assert.equal(await sellerB.locator('#loginPassword').inputValue(),'');
+  await sellerB.locator('#loginPassword').fill('SenhaErrada');await sellerB.locator('#loginButton').click();await sellerB.locator('#authStatus').getByText('Usuário ou senha inválidos.',{exact:true}).waitFor();assert.equal(await sellerB.locator('#loginPassword').inputValue(),'');
+  await sellerB.locator('#recoverButton').click();await sellerB.locator('#recoveryEmail').fill('b@example.test');await sellerB.locator('#sendRecoveryButton').click();await sellerB.locator('#authStatus').getByText('Se o e-mail estiver cadastrado, você receberá um link para definir sua senha.',{exact:true}).waitFor();assert.equal(recovered.email,'b@example.test');assert.equal(recovered.redirect,'http://127.0.0.1:4173/');
+  await sellerB.locator('#cancelRecovery').click();await sellerB.locator('#rememberLogin').uncheck();await login(sellerB,'vendedor04');await sellerB.locator('#logoutButton').click();await sellerB.reload();await sellerB.locator('#loginForm').waitFor({state:'visible'});assert.equal(await sellerB.locator('#loginEmail').inputValue(),'');
   if(process.env.SCREENSHOT_DIR)await sellerB.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'login-mobile.png'),fullPage:true});
-  assert.deepEqual(errors,[]);console.log('PASS: login, PC/celular, isolamento A/B, admin, cadastro/desativação, PDF, logout e mobile (API simulada).');
+  assert.deepEqual(errors,[]);console.log('PASS: usuário/e-mail, lembrar e esquecer usuário, recuperação, senha 6, PC/celular, isolamento, admin, cadastro/desativação, PDF e mobile (API simulada).');
  }finally{for(const context of contexts)await context.close();await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

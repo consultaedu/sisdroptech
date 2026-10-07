@@ -3,12 +3,16 @@
   const el=id=>document.getElementById(id);
   let profile=null,settings=null,users=[],busy=false,epoch=0;
   const showStatus=(id,message)=>el(id).textContent=message;
+  el('loginEmail').value=store.savedLogin();
+  el('rememberLogin').checked=!!store.savedLogin()||el('rememberLogin').checked;
   function locked(message='Entre para acessar seus pedidos.') {
    profile=null;settings=null;users=[];++epoch;
    setSales([]);resetDraft();el('orderSearch').value='';el('adminPanel').hidden=true;
    el('accountControls').hidden=true;el('cloudWorkspace').hidden=true;
    el('topbarNav').hidden=true;
    el('authGate').hidden=false;el('orderPreview').close();
+   el('loginPassword').value='';el('newPassword').value='';
+   el('loginForm').hidden=false;el('passwordForm').hidden=true;el('recoveryForm').hidden=true;
    showStatus('authStatus',message);render();
   }
   function controls() {
@@ -31,6 +35,9 @@
    if(!link.hidden)link.href=settings.google_sheet_url;
    el('googleEnvironmentStatus').textContent=`Banco: ${settings.environment} • ${!settings.google_configured?'Google ainda não configurado':settings.google_auto_send?'envio automático ao Google ativado':'envio automático ao Google desativado'}`;
    el('migrationPanel').hidden=profile.role!=='admin'||!legacyOrders.length;
+   el('sellerUsernameField').hidden=!settings.username_login;
+   el('sellerUsername').disabled=!settings.username_login;
+   el('sellerUsername').required=!!settings.username_login;
    el('legacyCount').textContent=legacyOrders.length;
   }
   async function reload({quiet=false}={}) {
@@ -52,12 +59,27 @@
    }finally{busy=false;el('refreshOrders').disabled=false;}
   }
   async function loadUsers() {
-   users=await store.users();
+   const version=epoch;const nextUsers=await store.users();
+   if(version!==epoch||profile?.role!=='admin')return;
+   users=nextUsers;
    const tbody=el('usersList');tbody.innerHTML='';const owners=el('migrationOwner');owners.innerHTML='';
    for(const user of users){
     const row=document.createElement('div');row.className='user-row';
     const text=document.createElement('div');text.textContent=(user.full_name||user.email)+' · '+user.email;
     const state=document.createElement('small');state.textContent=(user.role==='admin'?'Administrador':'Vendedor')+' · '+(user.active?'Ativo':'Desativado');text.appendChild(state);row.appendChild(text);
+    const actions=document.createElement('div');actions.className='user-access-actions';
+    if(settings.username_login){
+     const form=document.createElement('form');form.className='username-form';
+     const label=document.createElement('label');label.textContent='Usuário';label.htmlFor='username-'+user.id;
+     const input=document.createElement('input');input.id=label.htmlFor;input.type='text';input.value=user.username||'';input.required=true;input.minLength=3;input.maxLength=32;input.pattern='[a-zA-Z0-9][a-zA-Z0-9._\\-]{2,31}';input.autocomplete='off';input.autocapitalize='none';input.spellcheck=false;
+     const save=document.createElement('button');save.type='submit';save.className='button secondary';save.textContent='Salvar usuário';
+     form.append(label,input,save);actions.appendChild(form);
+     form.addEventListener('submit',async event=>{
+      event.preventDefault();save.disabled=true;
+      try{const result=await store.action({action:'set_username',id:user.id,username:input.value.trim()});showStatus('adminStatus',result.message);if(user.id===profile.id&&el('rememberLogin').checked){store.rememberLogin(result.username,true);el('loginEmail').value=result.username;}await loadUsers();}
+      catch(error){showStatus('adminStatus',error.message);}finally{save.disabled=false;}
+     });
+    }
     if(user.role==='seller'){
      const button=document.createElement('button');button.className='button secondary';button.type='button';button.textContent=user.active?'Desativar':'Ativar';
      button.addEventListener('click',async()=>{
@@ -65,8 +87,9 @@
       button.disabled=true;
       try{const result=await store.action({action:'set_seller_active',id:user.id,active:!user.active});showStatus('adminStatus',result.message);await loadUsers();}
       catch(error){showStatus('adminStatus',error.message);}finally{button.disabled=false;}
-     });row.appendChild(button);
+     });actions.appendChild(button);
     }
+    if(actions.childElementCount)row.appendChild(actions);
     tbody.appendChild(row);
     if(user.active){const option=document.createElement('option');option.value=user.id;option.textContent=user.full_name||user.email;owners.appendChild(option);}
    }
@@ -74,19 +97,25 @@
   }
   el('loginForm').addEventListener('submit',async event=>{
    event.preventDefault();el('loginButton').disabled=true;showStatus('authStatus','Entrando…');
-   try{await store.signIn(el('loginEmail').value.trim(),el('loginPassword').value);el('loginPassword').value='';await reload();}
-   catch(error){showStatus('authStatus',error.status===400?'E-mail ou senha inválidos.':error.message);}
+   try{const account=await store.signIn(el('loginEmail').value.trim(),el('loginPassword').value);const identifier=account.username||el('loginEmail').value.trim();store.rememberLogin(identifier,el('rememberLogin').checked);el('loginEmail').value=identifier;el('loginPassword').value='';await reload();}
+   catch(error){el('loginPassword').value='';showStatus('authStatus',error.status===400?'Usuário ou senha inválidos.':error.message);}
    finally{el('loginButton').disabled=false;}
   });
   el('logoutButton').addEventListener('click',async()=>{
    if(hasDraft()&&!confirm('Sair e descartar o pedido que ainda está em preenchimento?'))return;
    locked('Sessão encerrada.');await store.signOut();
   });
-  el('recoverButton').addEventListener('click',async()=>{
-   if(!el('loginEmail').value||!el('loginEmail').checkValidity()){showStatus('authStatus','Informe um e-mail válido no campo acima.');el('loginEmail').focus();return;}
-   el('recoverButton').disabled=true;
-   try{await store.recover(el('loginEmail').value.trim(),location.origin+location.pathname);showStatus('authStatus','Se o e-mail estiver cadastrado, você receberá um link para definir sua senha.');}
-   catch(error){showStatus('authStatus',error.message);}finally{el('recoverButton').disabled=false;}
+  el('rememberLogin').addEventListener('change',()=>{if(!el('rememberLogin').checked)store.rememberLogin('',false);});
+  el('recoverButton').addEventListener('click',()=>{
+   el('recoveryEmail').value=el('loginEmail').value.includes('@')?el('loginEmail').value:'';
+   el('loginForm').hidden=true;el('recoveryForm').hidden=false;el('loginPassword').value='';
+   showStatus('authStatus','Informe seu e-mail cadastrado para receber o link de recuperação.');
+  });
+  el('cancelRecovery').addEventListener('click',()=>{el('recoveryForm').hidden=true;el('loginForm').hidden=false;showStatus('authStatus','Entre com seu usuário e senha.');});
+  el('recoveryForm').addEventListener('submit',async event=>{
+   event.preventDefault();el('sendRecoveryButton').disabled=true;
+   try{await store.recover(el('recoveryEmail').value.trim(),location.origin+location.pathname);showStatus('authStatus','Se o e-mail estiver cadastrado, você receberá um link para definir sua senha.');}
+   catch(error){showStatus('authStatus',error.message);}finally{el('sendRecoveryButton').disabled=false;}
   });
   el('passwordForm').addEventListener('submit',async event=>{
    event.preventDefault();el('passwordButton').disabled=true;
@@ -98,7 +127,7 @@
   el('refreshOrders').addEventListener('click',()=>reload());
   el('newSellerForm').addEventListener('submit',async event=>{
    event.preventDefault();el('createSellerButton').disabled=true;
-   try{const result=await store.action({action:'create_seller',name:el('sellerName').value.trim(),email:el('sellerEmail').value.trim(),password:el('sellerPassword').value});el('newSellerForm').reset();showStatus('adminStatus',result.message+' Peça ao vendedor para alterar a senha ao entrar.');await loadUsers();}
+   try{const result=await store.action({action:'create_seller',name:el('sellerName').value.trim(),email:el('sellerEmail').value.trim(),password:el('sellerPassword').value,...(settings.username_login?{username:el('sellerUsername').value.trim()}:{})});el('newSellerForm').reset();showStatus('adminStatus',result.message+' Peça ao vendedor para alterar a senha ao entrar.');await loadUsers();}
    catch(error){showStatus('adminStatus',error.message);}finally{el('createSellerButton').disabled=false;}
   });
   el('importLegacyButton').addEventListener('click',async()=>{

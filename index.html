@@ -7,14 +7,14 @@
   <title>DropTech · Central de pedidos</title>
   <link rel="icon" type="image/png" href="assets/droptech-logo.png?v=1">
   <link rel="apple-touch-icon" href="assets/droptech-logo.png?v=1">
-  <link rel="stylesheet" href="app.css?v=2">
+  <link rel="stylesheet" href="app.css?v=3">
   <link rel="stylesheet" href="order-print.css">
   <script src="order-tools.js"></script>
   <script src="order-pdf.js?v=2"></script>
   <script src="google-sync.js"></script>
   <script src="backend-config.js?v=1"></script>
-  <script src="cloud-store.js?v=1"></script>
-  <script src="cloud-ui.js?v=1"></script>
+  <script src="cloud-store.js?v=2"></script>
+  <script src="cloud-ui.js?v=2"></script>
 </head>
 <body>
 <div id="appContent">
@@ -28,8 +28,9 @@
   </header>
   <section id="authGate" class="auth-gate" hidden aria-labelledby="authTitle">
     <div class="panel login-card"><p class="eyebrow">CENTRAL DE PEDIDOS</p><h1 id="authTitle">Bem-vindo à DropTech</h1><p>Entre na sua conta para acessar seus pedidos em qualquer dispositivo.</p>
-    <form id="loginForm"><div class="field"><label for="loginEmail">E-mail</label><input id="loginEmail" type="email" autocomplete="username" required></div><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button id="loginButton" class="button primary" type="submit">Entrar</button><button id="recoverButton" class="text-button" type="button">Esqueci minha senha</button></form>
-    <form id="passwordForm" hidden><div class="field"><label for="newPassword">Nova senha · pelo menos 12 caracteres</label><input id="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="200" required></div><button id="passwordButton" class="button primary" type="submit">Atualizar senha</button><button id="cancelPassword" class="text-button" type="button">Voltar</button></form><p id="authStatus" role="status"></p></div>
+    <form id="loginForm"><div class="field"><label for="loginEmail">Usuário ou e-mail</label><input id="loginEmail" type="text" placeholder="Ex.: vendedor01" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required></div><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" autocomplete="current-password" maxlength="200" required></div><label class="remember-login"><input id="rememberLogin" type="checkbox" checked> Lembrar usuário neste aparelho</label><button id="loginButton" class="button primary" type="submit">Entrar</button><button id="recoverButton" class="text-button" type="button">Esqueci minha senha</button></form>
+    <form id="recoveryForm" hidden><div class="field"><label for="recoveryEmail">E-mail cadastrado</label><input id="recoveryEmail" type="email" autocomplete="email" required></div><button id="sendRecoveryButton" class="button primary" type="submit">Enviar link de recuperação</button><button id="cancelRecovery" class="text-button" type="button">Voltar ao login</button></form>
+    <form id="passwordForm" hidden><div class="field"><label for="newPassword">Nova senha · pelo menos 6 caracteres</label><input id="newPassword" type="password" autocomplete="new-password" minlength="6" maxlength="200" required></div><button id="passwordButton" class="button primary" type="submit">Atualizar senha</button><button id="cancelPassword" class="text-button" type="button">Voltar</button></form><p id="authStatus" role="status"></p></div>
   </section>
   <main id="cloudWorkspace" class="workspace" hidden>
     <div id="cloudDataBar" class="cloud-data-bar" hidden><p id="cloudStatus" role="status">Carregando os pedidos do banco…</p><button id="refreshOrders" type="button" class="button secondary">Atualizar pedidos</button></div>
@@ -132,7 +133,7 @@
             </details></div>
     </section>
     <section id="adminPanel" class="panel admin-panel" hidden aria-labelledby="adminTitle"><p class="eyebrow">ADMINISTRAÇÃO</p><h2 id="adminTitle">Equipe de vendas</h2><p>Cadastre vendedores e controle quem pode acessar o sistema.</p><div id="usersList" class="users-list"></div>
-      <details><summary>Cadastrar vendedor</summary><form id="newSellerForm" class="new-seller-form"><div class="field"><label for="sellerName">Nome do vendedor</label><input id="sellerName" type="text" maxlength="120" required></div><div class="field"><label for="sellerEmail">E-mail</label><input id="sellerEmail" type="email" required></div><div class="field"><label for="sellerPassword">Senha temporária · mínimo 12 caracteres</label><input id="sellerPassword" type="password" autocomplete="new-password" minlength="12" maxlength="200" required></div><button id="createSellerButton" class="button primary" type="submit">Cadastrar vendedor</button></form></details>
+      <details><summary>Cadastrar vendedor</summary><form id="newSellerForm" class="new-seller-form"><div class="field"><label for="sellerName">Nome do vendedor</label><input id="sellerName" type="text" maxlength="120" required></div><div class="field" id="sellerUsernameField" hidden><label for="sellerUsername">Usuário para entrar</label><input id="sellerUsername" type="text" placeholder="Ex.: vendedor01" minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,31}" autocapitalize="none" autocomplete="off" spellcheck="false" disabled></div><div class="field"><label for="sellerEmail">E-mail para recuperação</label><input id="sellerEmail" type="email" required></div><div class="field"><label for="sellerPassword">Senha temporária · mínimo 6 caracteres</label><input id="sellerPassword" type="password" autocomplete="new-password" minlength="6" maxlength="200" required></div><button id="createSellerButton" class="button primary" type="submit">Cadastrar vendedor</button></form></details>
       <div id="migrationPanel" class="migration-panel" hidden><h3>Pedidos antigos deste navegador</h3><p><span id="legacyCount">0</span> pedido(s) encontrados. Escolha o responsável para importá-los no banco. A cópia local será mantida.</p><div class="field"><label for="migrationOwner">Vendedor responsável pelos pedidos importados</label><select id="migrationOwner"></select></div><button id="importLegacyButton" class="button secondary" type="button">Importar pedidos antigos</button></div><p id="adminStatus" role="status"></p>
     </section>
     <footer class="app-footer"><span>DropTech <span aria-hidden="true">·</span> Indústria e Comércio de Mangueiras</span><a href="#novo-pedido">Voltar ao novo pedido ↑</a></footer>

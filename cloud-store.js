@@ -14,6 +14,11 @@
             catch { throw new Error('A chave deve ser publishable ou anon. Nunca use service_role.'); }
         }
         const sessionKey = 'droptech_auth_' + new URL(base).hostname;
+        const loginKey = 'droptech_login_' + new URL(base).hostname;
+        function savedLogin() {try {return storage.getItem(loginKey)||'';} catch {return '';}}
+        function rememberLogin(identifier, enabled) {
+            try {if(enabled)storage.setItem(loginKey,String(identifier).trim());else storage.removeItem(loginKey);} catch {}
+        }
         let session = null, profile = null, refreshTask = null, generation = 0;
         const readSession = () => { try { return JSON.parse(storage.getItem(sessionKey)); } catch { return null; } };
         function remember(data) {
@@ -77,12 +82,20 @@
         }
         async function loadProfile() {
             const user = await api('/auth/v1/user');
-            const rows = await api('/rest/v1/profiles?id=eq.'+encodeURIComponent(user.id)+'&select=id,full_name,email,role,active');
+            const rows = await api('/rest/v1/profiles?id=eq.'+encodeURIComponent(user.id)+'&select=*');
             if (rows.length !== 1 || !rows[0].active) {clear(); throw new Error('Acesso não liberado. Peça ao administrador para ativar sua conta.');}
             profile = rows[0]; return profile;
         }
-        async function signIn(email,password) {
-            const data = await request('/auth/v1/token?grant_type=password',{method:'POST',body:{email,password}});
+        async function signIn(identifier,password) {
+            const version=generation;
+            const login=String(identifier).trim();
+            let data;
+            if(login.includes('@')) data=await request('/auth/v1/token?grant_type=password',{method:'POST',body:{email:login,password}});
+            else {
+                try {data=await request('/functions/v1/droptech-api',{method:'POST',body:{action:'login',username:login.toLowerCase(),password}});}
+                catch(error){if(error.status===401)throw new Error('Login por usuário ainda não configurado. Entre com seu e-mail.');throw error;}
+            }
+            if(version!==generation)throw new Error('A sessão foi alterada. Entre novamente.');
             ++generation; remember(data); return loadProfile();
         }
         async function restore() {
@@ -124,7 +137,7 @@
         async function deleteOrder(id) { await api('/rest/v1/orders?id=eq.'+encodeURIComponent(id),{method:'DELETE',headers:{Prefer:'return=representation'}}).then(rows=>{if(rows.length!==1) throw new Error('Pedido não encontrado ou sem permissão.');}); }
         async function settings() { return api('/rest/v1/rpc/workspace_settings',{method:'POST',body:{}}); }
         async function saveSettings(data) { return api('/rest/v1/app_settings?id=eq.true',{method:'PATCH',body:data}); }
-        async function users() { return api('/rest/v1/profiles?select=id,full_name,email,role,active&order=full_name.asc'); }
+        async function users() { return api('/rest/v1/profiles?select=*&order=full_name.asc'); }
         async function action(body) { return api('/functions/v1/droptech-api',{method:'POST',body}); }
         async function importOrders(orders,ownerId) {
             if(profile?.role!=='admin') throw new Error('Somente o administrador pode importar pedidos antigos.');
@@ -142,7 +155,7 @@
             await api('/auth/v1/user'); return true;
         }
         async function changePassword(password) { await api('/auth/v1/user',{method:'PUT',body:{password}}); }
-        return {signIn,restore,signOut,listOrders,saveOrder,deleteOrder,settings,saveSettings,users,action,importOrders,recover,recoverySession,changePassword,
+        return {signIn,restore,signOut,listOrders,saveOrder,deleteOrder,settings,saveSettings,users,action,importOrders,recover,recoverySession,changePassword,savedLogin,rememberLogin,
             currentProfile:()=>profile,hasSession:()=>!!session,clear};
     }
     const exported={create};
