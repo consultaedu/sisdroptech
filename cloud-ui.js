@@ -1,12 +1,12 @@
 (function(root){
  function start({store,getSales,setSales,resetDraft,hasDraft,render,legacyOrders}) {
   const el=id=>document.getElementById(id);
-  let profile=null,settings=null,users=[],busy=false,epoch=0;
-  const showStatus=(id,message)=>el(id).textContent=message;
+  let profile=null,settings=null,users=[],busy=false,epoch=0,recoveryBusy=false,recoveryEpoch=0;
+  const showStatus=(id,message,state='')=>{el(id).textContent=message;el(id).dataset.state=state;};
   el('loginEmail').value=store.savedLogin();
   el('rememberLogin').checked=!!store.savedLogin()||el('rememberLogin').checked;
   function locked(message='Entre para acessar seus pedidos.') {
-   profile=null;settings=null;users=[];++epoch;
+   profile=null;settings=null;users=[];++epoch;++recoveryEpoch;
    setSales([]);resetDraft();el('orderSearch').value='';el('adminPanel').hidden=true;
    el('accountControls').hidden=true;el('cloudWorkspace').hidden=true;
    el('topbarNav').hidden=true;
@@ -107,15 +107,35 @@
   });
   el('rememberLogin').addEventListener('change',()=>{if(!el('rememberLogin').checked)store.rememberLogin('',false);});
   el('recoverButton').addEventListener('click',()=>{
+   ++recoveryEpoch;el('recoveryEmail').removeAttribute('aria-invalid');
    el('recoveryEmail').value=el('loginEmail').value.includes('@')?el('loginEmail').value:'';
    el('loginForm').hidden=true;el('recoveryForm').hidden=false;el('loginPassword').value='';
    showStatus('authStatus','Informe seu e-mail cadastrado para receber o link de recuperação.');
   });
-  el('cancelRecovery').addEventListener('click',()=>{el('recoveryForm').hidden=true;el('loginForm').hidden=false;showStatus('authStatus','Entre com seu usuário e senha.');});
+  el('cancelRecovery').addEventListener('click',()=>{++recoveryEpoch;el('recoveryForm').hidden=true;el('loginForm').hidden=false;showStatus('authStatus','Entre com seu usuário e senha.');});
+  el('recoveryEmail').addEventListener('invalid',event=>{
+   event.preventDefault();el('recoveryEmail').setAttribute('aria-invalid','true');el('recoveryEmail').focus();
+   showStatus('authStatus',el('recoveryEmail').validity.valueMissing?'Informe seu e-mail cadastrado antes de enviar.':'Informe um e-mail válido, por exemplo: nome@gmail.com.','error');
+  });
+  el('recoveryEmail').addEventListener('input',()=>{
+   if(el('recoveryEmail').hasAttribute('aria-invalid')){
+    el('recoveryEmail').removeAttribute('aria-invalid');showStatus('authStatus','Informe seu e-mail cadastrado para receber o link de recuperação.');
+   }
+  });
   el('recoveryForm').addEventListener('submit',async event=>{
-   event.preventDefault();el('sendRecoveryButton').disabled=true;
-   try{await store.recover(el('recoveryEmail').value.trim(),location.origin+location.pathname);showStatus('authStatus','Se o e-mail estiver cadastrado, você receberá um link para definir sua senha.');}
-   catch(error){showStatus('authStatus',error.message);}finally{el('sendRecoveryButton').disabled=false;}
+   event.preventDefault();if(recoveryBusy)return;
+   const email=el('recoveryEmail');email.value=email.value.trim();if(!email.reportValidity())return;
+   const attempt=++recoveryEpoch;recoveryBusy=true;el('sendRecoveryButton').disabled=true;
+   el('sendRecoveryButton').textContent='Enviando link…';el('recoveryForm').setAttribute('aria-busy','true');email.readOnly=true;
+   showStatus('authStatus','Solicitando o link de recuperação. Aguarde…','pending');
+   try{
+    await store.recover(email.value,location.origin+location.pathname);
+    if(attempt===recoveryEpoch)showStatus('authStatus','Solicitação enviada. Se o e-mail estiver cadastrado, você receberá um link para definir sua senha. Confira também a pasta de spam.','success');
+   }catch(error){
+    if(attempt===recoveryEpoch)showStatus('authStatus',error.status===429?'Muitas tentativas de recuperação. Aguarde alguns minutos e tente novamente.':error.name==='TypeError'?'Não foi possível solicitar o link. Confira sua conexão e tente novamente.':'Não foi possível solicitar o link: '+error.message,'error');
+   }finally{
+    recoveryBusy=false;el('sendRecoveryButton').disabled=false;el('sendRecoveryButton').textContent='Enviar link de recuperação';el('recoveryForm').removeAttribute('aria-busy');email.readOnly=false;
+   }
   });
   el('passwordForm').addEventListener('submit',async event=>{
    event.preventDefault();el('passwordButton').disabled=true;
