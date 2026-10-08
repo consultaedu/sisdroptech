@@ -1,12 +1,12 @@
 (function(root){
  function start({store,getSales,setSales,resetDraft,hasDraft,render,legacyOrders}) {
   const el=id=>document.getElementById(id);
-  let profile=null,settings=null,users=[],busy=false,epoch=0,recoveryBusy=false,recoveryEpoch=0;
+  let profile=null,settings=null,users=[],busy=false,epoch=0,recoveryBusy=false,recoveryEpoch=0,passwordRecovery=false;
   const showStatus=(id,message,state='')=>{el(id).textContent=message;el(id).dataset.state=state;};
   el('loginEmail').value=store.savedLogin();
   el('rememberLogin').checked=!!store.savedLogin()||el('rememberLogin').checked;
   function locked(message='Entre para acessar seus pedidos.') {
-   profile=null;settings=null;users=[];++epoch;++recoveryEpoch;
+   profile=null;settings=null;users=[];passwordRecovery=false;++epoch;++recoveryEpoch;
    setSales([]);resetDraft();el('orderSearch').value='';el('adminPanel').hidden=true;
    el('accountControls').hidden=true;el('cloudWorkspace').hidden=true;
    el('topbarNav').hidden=true;
@@ -41,7 +41,7 @@
    el('legacyCount').textContent=legacyOrders.length;
   }
   async function reload({quiet=false}={}) {
-   if(busy)return;busy=true;const version=epoch;
+   if(busy||passwordRecovery)return;busy=true;const version=epoch;
    el('refreshOrders').disabled=true;
    try {
     const nextProfile=await store.restore();
@@ -164,13 +164,24 @@
   root.addEventListener('beforeunload',()=>clearInterval(timer));
   async function init() {
    locked('Verificando acesso…');
+   const authHash=location.hash,authParams=new URLSearchParams(authHash.replace(/^#/,''));
+   const recoveryLink=authParams.get('type')==='recovery',linkError=authParams.has('error')||authParams.has('error_code')||authParams.has('error_description');
+   if(authParams.has('access_token')||authParams.has('refresh_token')||recoveryLink||linkError)history.replaceState(null,'',location.pathname+location.search);
    try{
-    if(await store.recoverySession(location.hash)){
-     history.replaceState(null,'',location.pathname+location.search);el('passwordForm').hidden=false;el('loginForm').hidden=true;showStatus('authStatus','Defina uma nova senha para recuperar sua conta.');return;
+    passwordRecovery=recoveryLink;
+    if(await store.recoverySession(authHash)){
+     el('passwordForm').hidden=false;el('loginForm').hidden=true;showStatus('authStatus','Defina uma nova senha para recuperar sua conta.');el('newPassword').focus();return;
     }
-    if(location.hash.includes('access_token')||location.hash.includes('error_description'))history.replaceState(null,'',location.pathname+location.search);
+    passwordRecovery=false;
     await reload();
-   }catch(error){locked(error.message);}
+   }catch(error){
+    locked(error.message);
+    if(recoveryLink||linkError){
+     el('recoveryEmail').value=el('loginEmail').value.includes('@')?el('loginEmail').value:'';
+     el('loginForm').hidden=true;el('recoveryForm').hidden=false;
+     showStatus('authStatus',error.message,'error');
+    }
+   }
   }
   init();
   return {

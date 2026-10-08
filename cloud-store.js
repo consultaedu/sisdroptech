@@ -156,7 +156,10 @@
         async function recover(email,redirectTo) { await request('/auth/v1/recover?redirect_to='+encodeURIComponent(redirectTo),{method:'POST',body:{email}}); }
         async function recoverySession(hash) {
             const params=new URLSearchParams(hash.replace(/^#/,''));
-            if(params.get('type')!=='recovery' || !params.get('access_token') || !params.get('refresh_token')) return false;
+            if(params.has('error') || params.has('error_code') || params.has('error_description'))
+                throw new Error(params.get('error_code')==='otp_expired'?'Este link de recuperação é inválido ou já expirou. Solicite um novo link.':'Não foi possível validar este link de acesso. Solicite um novo link de recuperação.');
+            if(params.get('type')!=='recovery') return false;
+            if(!params.get('access_token') || !params.get('refresh_token')) throw new Error('O link de recuperação está incompleto. Solicite um novo link.');
             ++generation; remember({access_token:params.get('access_token'),refresh_token:params.get('refresh_token'),expires_in:Number(params.get('expires_in'))||3600});
             await api('/auth/v1/user'); return true;
         }

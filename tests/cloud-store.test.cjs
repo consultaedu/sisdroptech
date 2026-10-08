@@ -86,6 +86,20 @@ test('Chaves administrativas são rejeitadas no frontend',()=>{
  const token='eyJ.'+Buffer.from(JSON.stringify({role:'service_role'})).toString('base64')+'.x';assert.throws(()=>create({...config,publishableKey:token}),/Nunca use service_role/);
 });
 
+test('Link de recuperação válido autentica antes de alterar a senha; expirado ou incompleto não vira login silencioso',async()=>{
+ const local=storage();let calls=0,password;
+ const store=create(config,{storage:local,fetch:async(url,options)=>{
+  calls++;assert.equal(options.headers.Authorization,'Bearer reset-token');
+  if(options.method==='PUT')password=JSON.parse(options.body).password;
+  return response({id:'seller'});
+ }});
+ await assert.rejects(()=>store.recoverySession('#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid'),/expirou/);
+ await assert.rejects(()=>store.recoverySession('#type=recovery&access_token=incomplete'),/incompleto/);assert.equal(calls,0);assert.equal(local.data.size,0);
+ assert.equal(await store.recoverySession('#historico'),false);
+ assert.equal(await store.recoverySession('#type=recovery&access_token=reset-token&refresh_token=reset-refresh&expires_in=3600'),true);
+ await store.changePassword('senha-ficticia');assert.equal(password,'senha-ficticia');assert.equal(calls,2);assert.ok(!JSON.stringify([...local.data]).includes('senha-ficticia'));
+});
+
 test('Revisão envia versão e tentativa ao RPC protegido; histórico carrega somente o pedido indicado',async()=>{
  const calls=[];const store=create(config,{storage:storage(),fetch:async(url,options)=>{
   if(url.includes('/token?'))return response({access_token:'token',refresh_token:'refresh',expires_in:3600});
