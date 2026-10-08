@@ -26,7 +26,7 @@ root.PDFLib = module.exports;
     function filename(order) {
         const client = String(order.client || 'cliente').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 60) || 'cliente';
-        return `${root.OrderTools.orderNumber(order)}-${client}.pdf`;
+        return `${root.OrderTools.orderNumber(order)}-${client}${order.revision?'-v'+order.revision:''}.pdf`;
     }
     async function build(order, library = root.PDFLib) {
         if (!library) throw new Error('Não foi possível carregar o gerador de PDF. Recarregue a página e tente novamente.');
@@ -88,7 +88,9 @@ root.PDFLib = module.exports;
         const metadata = [
             ['Empresa / Comprador', order.client], ['CNPJ', order.cnpj],
             ['Inscrição estadual', order.ie || 'Não informada'], ['Responsável', order.buyer],
-            ['Telefone / WhatsApp', order.phone], ['Data do pedido', order.date]
+            ['Telefone / WhatsApp', order.phone], ['Data do pedido', order.date],
+            ...(order.revision?[['Versão do pedido',String(order.revision)]]:[]),
+            ...(order.renewedFromId?[['Renovação de',tools.orderNumber({id:order.renewedFromId})]]:[])
         ];
         const fieldWidth = (content - 24) / 2;
         for (let i = 0; i < metadata.length; i += 2) {
@@ -117,7 +119,8 @@ root.PDFLib = module.exports;
         order.items.forEach(item => {
             const product = wrap(item.product, 260, bold, 10).map(value => ({ value, font: bold, color: ink }));
             const detail = wrap(item.detail, 260, regular, 9).map(value => ({ value, font: regular, color: muted }));
-            const lines = [...product, ...detail];
+            const observation = item.observation ? wrap('Observação: '+item.observation,260,regular,9).map(value=>({value,font:regular,color:ink})) : [];
+            const lines = [...product, ...detail, ...observation];
             let offset = 0;
             while (offset < lines.length) {
                 if (y + 40 > bottom) { newPage(); tableHeader(); }

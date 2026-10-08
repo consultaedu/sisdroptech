@@ -696,7 +696,7 @@ test('Biblioteca incorporada não perde o global PDFLib quando há AMD ou Common
 
 test('Página publicada solicita o gerador completo com versão para renovar o cache', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-    assert.ok(html.includes('src="order-pdf.js?v=2"'));
+    assert.ok(html.includes('src="order-pdf.js?v=3"'));
     assert.equal(html.includes('src="vendor/pdf-lib-1.17.1.min.js"'), false);
     assert.ok(fs.readFileSync(path.join(root, 'order-pdf.js'), 'utf8').includes('root.PDFLib = module.exports;'));
 });

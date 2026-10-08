@@ -7,13 +7,13 @@
   <title>DropTech · Central de pedidos</title>
   <link rel="icon" type="image/png" href="assets/droptech-logo.png?v=1">
   <link rel="apple-touch-icon" href="assets/droptech-logo.png?v=1">
-  <link rel="stylesheet" href="app.css?v=3">
-  <link rel="stylesheet" href="order-print.css">
-  <script src="order-tools.js"></script>
-  <script src="order-pdf.js?v=2"></script>
+  <link rel="stylesheet" href="app.css?v=4">
+  <link rel="stylesheet" href="order-print.css?v=2">
+  <script src="order-tools.js?v=2"></script>
+  <script src="order-pdf.js?v=3"></script>
   <script src="google-sync.js"></script>
   <script src="backend-config.js?v=1"></script>
-  <script src="cloud-store.js?v=2"></script>
+  <script src="cloud-store.js?v=3"></script>
   <script src="cloud-ui.js?v=2"></script>
 </head>
 <body>
@@ -35,6 +35,7 @@
   <main id="cloudWorkspace" class="workspace" hidden>
     <div id="cloudDataBar" class="cloud-data-bar" hidden><p id="cloudStatus" role="status">Carregando os pedidos do banco…</p><button id="refreshOrders" type="button" class="button secondary">Atualizar pedidos</button></div>
     <div class="page-intro" id="novo-pedido"><div><p class="eyebrow">COMERCIAL / PEDIDOS</p><h1>Sistema Comercial Integrado.</h1><p>Pedidos com Múltiplos Itens.</p></div><a class="history-shortcut" href="#historico">Consultar pedidos <span aria-hidden="true">↗</span></a></div>
+    <div id="draftBanner" class="draft-banner" hidden><div><strong id="draftTitle"></strong><p id="draftHelp"></p></div><button type="button" class="button secondary" onclick="cancelOrderDraft()">Cancelar</button></div>
     <form id="orderForm" class="order-layout">
       <section class="panel customer-panel" aria-label="Dados do cliente">
         <div class="section-heading"><span class="step">01</span><div><h2>Cliente e responsável</h2><p>Informe os dados de quem está comprando.</p></div></div>
@@ -79,7 +80,8 @@
                                 <option value="100">100m</option>
                                 <option value="200">200m</option>
                             </select></div><div class="field"><label for="itemRollQty">Quantidade</label><input id="itemRollQty" type="number" min="1" value="1" inputmode="numeric"></div></div>
-          <button type="button" class="button add-item" onclick="addItemToCart()"><span aria-hidden="true">＋</span> Adicionar item</button>
+          <div class="field item-notes-field"><label for="itemObservation">Observação do item <em>opcional</em></label><textarea id="itemObservation" rows="2" maxlength="500" placeholder="Ex.: cor azul, conforme solicitado pelo cliente"></textarea></div>
+          <button id="addItemButton" type="button" class="button add-item" onclick="addItemToCart()">＋ Adicionar item</button><button id="cancelItemEdit" type="button" class="button secondary" hidden onclick="resetItemEntry()">Cancelar alteração do item</button>
         </div>
         <div class="cart-table-wrap"><table class="cart-table"><caption class="sr-only">Itens do pedido atual</caption><thead><tr><th>Produto</th><th>Metragem</th><th>Preço / m</th><th>Subtotal</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody id="cartTableBody"><tr><td colspan="5">Nenhum item adicionado ao pedido ainda.</td></tr></tbody></table></div>
       </section>
@@ -107,6 +109,7 @@
         </div>
         <div class="order-summary"><div><span>Itens adicionados</span><strong id="summaryItems">0 item(ns)</strong></div><div><span>Subtotal</span><strong id="summaryGross">R$ 0,00</strong></div><div><span>Desconto</span><strong id="summaryDiscount">− R$ 0,00</strong></div></div>
         <div class="total-box"><span>Total do pedido</span><strong id="finalGrandTotalDisplay">R$ 0,00</strong><small id="installmentDetailDisplay"></small></div>
+        <div id="revisionReasonField" class="field revision-reason" hidden><label for="revisionReason">Motivo da revisão</label><textarea id="revisionReason" rows="2" minlength="3" maxlength="500" placeholder="Ex.: cliente solicitou outra cor"></textarea></div>
         <button type="submit" id="saveOrderButton" class="button primary save-order">Salvar pedido <span aria-hidden="true">→</span></button>
         <p class="save-help">Depois de salvar, acesse o PDF no histórico.</p>
         <p id="orderSaveStatus" role="status"></p>
@@ -149,6 +152,7 @@
         </div>
         <article id="printOrder"></article>
     </dialog>
+    <dialog id="revisionHistory" aria-labelledby="revisionHistoryTitle"><div class="revision-toolbar"><div><h2 id="revisionHistoryTitle">Histórico de revisões</h2><p id="revisionHistoryStatus" role="status"></p></div><button type="button" class="button secondary" onclick="closeRevisionHistory()">Fechar</button></div><div id="revisionHistoryList" class="revision-list"></div></dialog>
     <!-- Script JavaScript -->
     <script>
         const cloudEnabled = !!window.DropTechBackend?.enabled;
@@ -159,6 +163,157 @@
         let sales = cloudEnabled ? [] : loadSales();
         const selectedOrderIds = new Set();
         let previewOrder = null;
+        let draftContext = null, pendingReview = null, editingItemIndex = -1, historyLoadToken = 0;
+
+        function resetItemEntry() {
+            editingItemIndex = -1;
+            document.getElementById('itemProduct').selectedIndex = 0;
+            document.getElementById('itemMeters').value = '';
+            document.getElementById('itemRollQty').value = '1';
+            document.getElementById('itemObservation').value = '';
+            document.getElementById('addItemButton').textContent = '＋ Adicionar item';
+            document.getElementById('cancelItemEdit').hidden = true;
+        }
+
+        function resetOrderDraft() {
+            draftContext = null; pendingReview = null; currentCart = [];
+            document.getElementById('orderForm').reset();
+            document.getElementById('draftBanner').hidden = true;
+            document.getElementById('revisionReasonField').hidden = true;
+            document.getElementById('revisionReason').required = false;
+            document.getElementById('saveOrderButton').textContent = 'Salvar pedido →';
+            resetItemEntry(); toggleInstallments(); toggleCartMode(); renderCart();
+        }
+
+        function cancelOrderDraft() {
+            if (saveBusy) return;
+            if (pendingReview || pendingCloudOrder) {alert('Há um salvamento sem confirmação. Atualize o histórico e tente salvar novamente para confirmar o resultado.');return;}
+            if (confirm('Descartar o pedido em preenchimento?')) {resetOrderDraft();document.getElementById('orderSaveStatus').textContent='Preenchimento cancelado.';}
+        }
+
+        function editCartItem(index) {
+            if (saveBusy) return;
+            const item = currentCart[index]; if (!item) return;
+            const select = document.getElementById('itemProduct');
+            if (![...select.options].some(option=>option.value===item.product)) {
+                const option=document.createElement('option');option.value=item.product;option.textContent=item.product;
+                option.setAttribute('data-price',item.unitPrice);option.setAttribute('data-legacy','true');select.appendChild(option);
+            }
+            editingItemIndex = index; select.value = item.product;
+            const match = /^([\d.,]+)\s+rolo(?:\(s\)|s)?\s+de\s+([\d.,]+)m/.exec(item.detail);
+            const rollSize = item.rollSize || (match ? Number(match[2].replace(',','.')) : 0);
+            const rollQty = item.rollQty || (match ? Number(match[1].replace(',','.')) : 0);
+            const sizeSelect=document.getElementById('itemRollSize');
+            const supportedRoll=rollSize && [...sizeSelect.options].some(option=>Number(option.value)===rollSize);
+            document.getElementById('itemMode').value = supportedRoll ? 'rolos' : 'metragem';
+            document.getElementById('itemMeters').value = item.meters;
+            if (supportedRoll) {sizeSelect.value=String(rollSize);document.getElementById('itemRollQty').value=rollQty;}
+            document.getElementById('itemObservation').value = item.observation || '';
+            document.getElementById('addItemButton').textContent = 'Salvar alteração do item';
+            document.getElementById('cancelItemEdit').hidden = false;
+            toggleCartMode();document.getElementById('itemObservation').focus();
+        }
+
+        function startOrderDraft(index,kind) {
+            if (saveBusy) return;
+            if (pendingCloudOrder || pendingReview) {alert('Confirme o salvamento pendente antes de abrir outro pedido.');return;}
+            if (cloudEnabled) {
+                try {cloudUI.requireAccount();} catch(error) {alert(error.message);return;}
+                if (kind==='review' && !cloudUI.settings()?.order_revisions) {alert('Atualize o banco para habilitar o histórico de revisões.');return;}
+            }
+            const sale=sales[index];if(!sale)return;
+            if ((currentCart.length || document.getElementById('clientName').value) && !confirm('Substituir o pedido que está em preenchimento?')) return;
+            resetOrderDraft();
+            draftContext={kind,source:OrderTools.payload(sale),revision:sale.revision||1,history:sale.localRevisions||null};
+            for(const [field,key] of [['clientName','client'],['clientCnpj','cnpj'],['clientIe','ie'],['buyerName','buyer'],['buyerPhone','phone'],['discountPercent','discountPct']])
+                document.getElementById(field).value=sale[key]??'';
+            const payment=/^(.*?) em (\d+)x$/.exec(sale.payment);
+            const method=payment?payment[1]:sale.payment;
+            const paymentSelect=document.getElementById('paymentMethod');
+            if (![...paymentSelect.options].some(option=>option.value===method)) {
+                const option=document.createElement('option');option.value=method;option.textContent=method;paymentSelect.appendChild(option);
+            }
+            paymentSelect.value=method;toggleInstallments();
+            document.getElementById('installmentsCount').value=payment?payment[2]:'1';
+            currentCart=JSON.parse(JSON.stringify(sale.items));
+            let missing=0;
+            if(kind==='renew'){
+                const prices=new Map([...document.getElementById('itemProduct').options].filter(option=>!option.hasAttribute('data-legacy')).map(option=>[option.value,Number(option.getAttribute('data-price'))]));
+                for(const item of currentCart){if(prices.get(item.product)>0){item.unitPrice=prices.get(item.product);item.subtotal=item.meters*item.unitPrice;}else missing++;}
+            }
+            document.getElementById('draftBanner').hidden=false;
+            document.getElementById('draftTitle').textContent=kind==='review'?'Revisando '+OrderTools.orderNumber(sale)+' · versão '+draftContext.revision:'Renovação de '+OrderTools.orderNumber(sale);
+            document.getElementById('draftHelp').textContent=kind==='review'?'A versão anterior será preservada. Informe o motivo antes de salvar.':'Será criado um novo pedido. Confira os preços da tabela atual, os itens e o pagamento.'+(missing?' Há produto fora da tabela; seu preço anterior foi mantido.':'');
+            document.getElementById('revisionReasonField').hidden=kind!=='review';
+            document.getElementById('revisionReason').required=kind==='review';
+            document.getElementById('saveOrderButton').textContent=kind==='review'?'Salvar revisão →':'Salvar novo pedido →';
+            document.getElementById('orderSaveStatus').textContent='';
+            renderCart();document.getElementById('novo-pedido').scrollIntoView?.({behavior:'smooth'});
+        }
+
+        async function saveOrderRevision(order) {
+            const context=draftContext,reason=document.getElementById('revisionReason').value.trim();
+            if(reason.length<3 || reason.length>500){alert('Informe o motivo da revisão (3 a 500 caracteres).');return;}
+            order.id=context.source.id;order.date=context.source.date;
+            if(context.source.createdAt)order.createdAt=context.source.createdAt;else delete order.createdAt;
+            if(context.source.renewedFromId)order.renewedFromId=context.source.renewedFromId;
+            const signature=JSON.stringify({order,reason});
+            if(pendingReview && pendingReview.signature!==signature){alert('Confirme a tentativa anterior antes de alterar os dados da revisão.');return;}
+            if(!OrderTools.changes(context.source,order).length){alert('Altere algum dado antes de salvar a revisão.');return;}
+            saveBusy=true;document.getElementById('saveOrderButton').disabled=true;
+            document.getElementById('orderSaveStatus').textContent='Salvando a revisão e preservando a versão anterior…';
+            try{
+                if(cloudEnabled){
+                    pendingReview ||= {requestId:OrderTools.newId(),signature};
+                    const accountId=cloudUI.profile().id;
+                    await cloudStore.reviseOrder(order,context.revision,reason,pendingReview.requestId);
+                    pendingReview=null;
+                    if(cloudUI.profile()?.id!==accountId)return;
+                    resetOrderDraft();await cloudUI.reload({quiet:true});
+                    document.getElementById('orderSaveStatus').textContent='Revisão salva. A versão anterior está disponível em Versões.';
+                    if(cloudUI.settings()?.google_auto_send && cloudUI.settings()?.google_configured){
+                        try{await cloudUI.sync([order]);}catch{document.getElementById('orderSaveStatus').textContent='Revisão salva. Reenvie o pedido ao Google pelo histórico.';}
+                    }
+                }else{
+                    const original=sales.find(sale=>sale.id===order.id);
+                    const history=context.history||[{revision:context.revision,payload:context.source,edited_at:context.source.createdAt||new Date().toISOString(),editor_name:'Registro local',reason:'Pedido original'}];
+                    const updated={...order,revision:context.revision+1,localRevisions:[...history,{revision:context.revision+1,payload:OrderTools.payload(order),edited_at:new Date().toISOString(),editor_name:'Neste aparelho',reason}]};
+                    const next=sales.map(sale=>sale===original?updated:sale);
+                    localStorage.setItem('droptech_sales_v3',JSON.stringify(next));sales=next;
+                    resetOrderDraft();renderSalesHistory();googleSync.enqueue([updated],true);
+                    document.getElementById('orderSaveStatus').textContent='Revisão salva neste navegador. Consulte as versões no histórico.';
+                }
+            }catch(error){
+                if(error.message.includes('outro aparelho') || error.status===400 || error.status===403)pendingReview=null;
+                document.getElementById('orderSaveStatus').textContent='Não foi possível salvar a revisão: '+error.message+' Os dados em preenchimento foram mantidos.';
+            }finally{saveBusy=false;document.getElementById('saveOrderButton').disabled=false;}
+        }
+
+        function closeRevisionHistory() {
+            ++historyLoadToken;document.getElementById('revisionHistory').close();
+            document.getElementById('revisionHistoryList').innerHTML='';
+        }
+
+        async function viewOrderHistory(index) {
+            const sale=sales[index];if(!sale)return;
+            const token=++historyLoadToken,e=OrderTools.escapeHtml;
+            document.getElementById('revisionHistoryList').innerHTML='';
+            document.getElementById('revisionHistoryStatus').textContent='Carregando '+OrderTools.orderNumber(sale)+'…';
+            document.getElementById('revisionHistory').showModal();
+            try{
+                const versions=cloudEnabled?await cloudStore.orderHistory(sale.id):sale.localRevisions||[{revision:sale.revision||1,payload:OrderTools.payload(sale),editor_name:'Registro local',edited_at:sale.createdAt||'',reason:'Pedido original'}];
+                if(token!==historyLoadToken)return;
+                document.getElementById('revisionHistoryStatus').textContent=OrderTools.orderNumber(sale)+' · '+versions.length+' versão(ões)';
+                for(let i=versions.length-1;i>=0;i--){
+                    const entry=versions[i],changes=i?OrderTools.changes(versions[i-1].payload,entry.payload):[];
+                    const card=document.createElement('article');card.className='revision-card';
+                    card.innerHTML='<h3>Versão '+e(entry.revision)+'</h3><p>'+e(entry.edited_at?new Date(entry.edited_at).toLocaleString('pt-BR'):sale.date)+' · '+e(entry.editor_name)+'</p><p><strong>Motivo:</strong> '+e(entry.reason)+'</p>'+(changes.length?'<ul>'+changes.map(change=>'<li>'+e(change)+'</li>').join('')+'</ul>':'');
+                    const button=document.createElement('button');button.type='button';button.className='button secondary';button.textContent='Ver / PDF desta versão';
+                    button.addEventListener('click',()=>{const snapshot={...OrderTools.payload(entry.payload),revision:entry.revision};closeRevisionHistory();previewOrder=snapshot;document.getElementById('printOrder').innerHTML=OrderTools.printHtml(snapshot);document.getElementById('pdfStatus').textContent='Versão '+entry.revision+' preservada no histórico.';document.getElementById('orderPreview').showModal();});
+                    card.appendChild(button);document.getElementById('revisionHistoryList').appendChild(card);
+                }
+            }catch(error){if(token===historyLoadToken)document.getElementById('revisionHistoryStatus').textContent=error.message;}
+        }
 
         function loadSales() {
             try {
@@ -212,7 +367,7 @@
             const productSelect = document.getElementById('itemProduct');
             const selectedOption = productSelect.options[productSelect.selectedIndex];
             const productName = productSelect.value;
-            const unitPrice = parseFloat(selectedOption.getAttribute('data-price')) || 0;
+            const unitPrice = editingItemIndex >= 0 && currentCart[editingItemIndex].product === productName ? currentCart[editingItemIndex].unitPrice : parseFloat(selectedOption.getAttribute('data-price')) || 0;
 
             if (!productName || unitPrice === 0) {
                 alert('Selecione um produto válido.');
@@ -240,22 +395,27 @@
 
             const subtotal = meters * unitPrice;
 
-            currentCart.push({
+            const item = {
                 product: productName,
                 detail: descriptionDetail,
                 meters: meters,
                 unitPrice: unitPrice,
-                subtotal: subtotal
-            });
+                subtotal: subtotal,
+                observation: document.getElementById('itemObservation').value.trim(),
+                mode: mode,
+                ...(mode === 'rolos' ? {rollSize:Number(document.getElementById('itemRollSize').value),rollQty:Number(document.getElementById('itemRollQty').value)} : {})
+            };
+            if (item.observation.length > 500) {alert('A observação aceita até 500 caracteres.');return;}
+            if (mode === 'rolos' && (!Number.isInteger(item.rollQty) || item.rollQty < 1)) {alert('Informe uma quantidade inteira de rolos.');return;}
+            if (editingItemIndex >= 0) currentCart[editingItemIndex] = item; else currentCart.push(item);
 
-            productSelect.selectedIndex = 0;
-            document.getElementById('itemMeters').value = '';
-            document.getElementById('itemRollQty').value = '1';
+            resetItemEntry();
 
             renderCart();
         }
 
         function removeFromCart(index) {
+            if (editingItemIndex >= 0) resetItemEntry();
             currentCart.splice(index, 1);
             renderCart();
         }
@@ -270,14 +430,16 @@
                 return;
             }
 
+            const e = OrderTools.escapeHtml;
             currentCart.forEach((item, index) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td data-label="Produto" class="p-2 text-xs font-medium">${item.product}<br><span class="text-slate-500 font-normal">${item.detail}</span></td>
+                    <td data-label="Produto" class="p-2 text-xs font-medium">${e(item.product)}<br><span class="text-slate-500 font-normal">${e(item.detail)}</span>${item.observation?'<small class="item-observation">Observação: '+e(item.observation)+'</small>':''}</td>
                     <td data-label="Metragem" class="p-2 text-xs">${item.meters.toLocaleString('pt-BR', {minimumFractionDigits: 2})} m</td>
                     <td data-label="Preço / metro" class="p-2 text-xs">R$ ${item.unitPrice.toLocaleString('pt-BR', {minimumFractionDigits: 4})}</td>
                     <td data-label="Subtotal" class="p-2 text-xs text-blue-700 font-semibold">${OrderTools.money(item.subtotal)}</td>
                     <td class="p-2 text-center">
+                        <button type="button" aria-label="Editar item ${index + 1}" onclick="editCartItem(${index})">Editar</button>
                         <button type="button" aria-label="Remover item ${index + 1}" onclick="removeFromCart(${index})" class="text-red-500 hover:text-red-700 text-xs bg-red-50 px-2 py-1 rounded">Remover</button>
                     </td>
                 `;
@@ -313,6 +475,7 @@
         document.getElementById('orderForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             if (saveBusy) return;
+            if (editingItemIndex >= 0) {alert('Salve ou cancele a alteração do item antes de concluir o pedido.');return;}
             if (cloudEnabled) {
                 try { cloudUI.requireAccount(); } catch(error) { alert(error.message); return; }
             }
@@ -352,6 +515,9 @@
                 payment: paymentDescription
             };
 
+            if (draftContext?.kind === 'review') {await saveOrderRevision(newOrder);return;}
+            if (draftContext?.kind === 'renew') newOrder.renewedFromId = draftContext.source.id;
+
             if (cloudEnabled) {
                 const signature = JSON.stringify({...newOrder, id: undefined, createdAt: undefined, date: undefined});
                 if (pendingCloudOrder && signature !== pendingCloudSignature) {
@@ -367,8 +533,7 @@
                     const savedOrder = pendingCloudOrder;
                     pendingCloudOrder = null; pendingCloudSignature = '';
                     if (cloudUI.profile()?.id !== accountId) return;
-                    document.getElementById('orderForm').reset(); currentCart = [];
-                    toggleInstallments(); toggleCartMode(); renderCart();
+                    resetOrderDraft();
                     await cloudUI.reload({quiet:true});
                     document.getElementById('orderSaveStatus').textContent = 'Pedido salvo no banco. Já pode ser consultado em outro aparelho com o mesmo login.';
                     if (cloudUI.settings()?.google_auto_send && cloudUI.settings()?.google_configured) {
@@ -388,18 +553,14 @@
                 return;
             }
 
-            document.getElementById('orderForm').reset();
-            currentCart = [];
-            toggleInstallments();
-            toggleCartMode();
-            renderCart();
+            resetOrderDraft();
             renderSalesHistory();
             document.getElementById('orderSaveStatus').textContent = 'Pedido registrado com sucesso. Use o botão PDF no histórico para imprimir.';
             googleSync.enqueue([newOrder]);
         });
 
         async function deleteSale(index) {
-            if (confirm('Deseja realmente excluir este pedido do histórico?')) {
+            if (confirm('Excluir este pedido e seu histórico de revisões? Essa ação não pode ser desfeita.')) {
                 if (cloudEnabled) {
                     try { cloudUI.requireAccount(); await cloudStore.deleteOrder(sales[index].id); await cloudUI.reload(); }
                     catch(error) { alert(error.message); }
@@ -461,12 +622,12 @@
 
             visible.forEach(sale => {
                 const index = sales.indexOf(sale);
-                let itemsListHtml = sale.items.map(i => `• ${e(i.product)} (${e(i.detail)}) - ${OrderTools.money(i.subtotal)}`).join('<br>');
+                let itemsListHtml = sale.items.map(i => `• ${e(i.product)} (${e(i.detail)}) - ${OrderTools.money(i.subtotal)}${i.observation?'<small class="item-observation">Observação: '+e(i.observation)+'</small>':''}`).join('<br>');
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td data-label="Selecionar pedido" class="p-3"><input type="checkbox" ${selectedOrderIds.has(sale.id) ? 'checked' : ''} aria-label="${e('Selecionar pedido de ' + sale.client)}"></td>
-                    <td data-label="Data e envio" class="p-3 text-xs">${e(sale.date)}${cloudEnabled && cloudUI?.profile()?.role === 'admin' ? '<br><strong>' + e(cloudUI.ownerName(sale.ownerId)) + '</strong>' : ''}<br><span class="text-[10px] text-slate-400 break-all">${e(OrderTools.orderNumber(sale))}</span><br><span class="text-[11px] text-blue-800" title="${e(cloudEnabled ? sale.googleError || '' : googleSync.status(sale.id).error || '')}">${e(cloudEnabled ? cloudUI?.label(sale) || 'Salvo no banco' : googleSync.labels(sale.id))}</span></td>
+                    <td data-label="Data e envio" class="p-3 text-xs">${e(sale.date)}${cloudEnabled && cloudUI?.profile()?.role === 'admin' ? '<br><strong>' + e(cloudUI.ownerName(sale.ownerId)) + '</strong>' : ''}<br><span class="text-[10px] text-slate-400 break-all">${e(OrderTools.orderNumber(sale))}</span><br><span>Versão ${sale.revision||1}${sale.renewedFromId?' · Renovado':''}</span><br><span class="text-[11px] text-blue-800" title="${e(cloudEnabled ? sale.googleError || '' : googleSync.status(sale.id).error || '')}">${e(cloudEnabled ? cloudUI?.label(sale) || 'Salvo no banco' : googleSync.labels(sale.id))}</span></td>
                     <td data-label="Cliente" class="p-3 font-medium"><strong>${e(sale.client)}</strong><br><span class="text-xs text-slate-500">CNPJ: ${e(sale.cnpj)}</span></td>
                     <td data-label="Responsável" class="p-3 text-xs"><strong>${e(sale.buyer)}</strong><br><span class="text-slate-500">Tel: ${e(sale.phone)}</span></td>
                     <td data-label="Itens" class="p-3 text-xs">${itemsListHtml}</td>
@@ -474,7 +635,10 @@
                     <td data-label="Pagamento" class="p-3 text-xs">${e(sale.payment)}</td>
                     <td class="p-3 text-center">
                         <button type="button" onclick="previewSale(${index})" class="text-blue-700 hover:text-blue-900 text-xs bg-blue-50 px-2 py-1 rounded mb-2">Ver / PDF</button>
-                        <button onclick="deleteSale(${index})" class="text-red-500 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 px-2 py-1 rounded">Excluir</button>
+                        <button type="button" onclick="startOrderDraft(${index},'review')" ${cloudEnabled && !cloudUI?.settings()?.order_revisions ? 'disabled title="Atualize o banco para habilitar revisões"' : ''}>Revisar</button>
+                        <button type="button" onclick="startOrderDraft(${index},'renew')">Renovar</button>
+                        <button type="button" onclick="viewOrderHistory(${index})" ${cloudEnabled && !cloudUI?.settings()?.order_revisions ? 'disabled' : ''}>Versões</button>
+                        <button type="button" onclick="deleteSale(${index})" class="text-red-500 hover:text-red-700 text-xs bg-red-50 hover:bg-red-100 px-2 py-1 rounded">Excluir</button>
                     </td>
                 `;
                 tr.querySelector('input[type="checkbox"]').addEventListener('change', event => {
@@ -652,7 +816,7 @@
             try {legacyOrders=loadSales();}catch {} // Broken legacy storage must not prevent cloud login.
             cloudUI = CloudUI.start({store:cloudStore,getSales:()=>sales,
                 setSales(orders){sales=orders;for(const id of selectedOrderIds)if(!orders.some(order=>order.id===id))selectedOrderIds.delete(id);},
-                resetDraft(){currentCart=[];pendingCloudOrder=null;pendingCloudSignature='';previewOrder=null;document.getElementById('printOrder').innerHTML='';document.getElementById('orderForm').reset();renderCart();},
+                resetDraft(){pendingCloudOrder=null;pendingCloudSignature='';previewOrder=null;document.getElementById('printOrder').innerHTML='';closeRevisionHistory();resetOrderDraft();},
                 hasDraft:()=>currentCart.length>0||!!document.getElementById('clientName').value,
                 render:renderSalesHistory,legacyOrders});
         } else if (window.DropTechBackend || !window.document) {

@@ -85,6 +85,19 @@ test('Chaves administrativas são rejeitadas no frontend',()=>{
  assert.throws(()=>create({...config,publishableKey:'sb_secret_private'}),/pública/);
  const token='eyJ.'+Buffer.from(JSON.stringify({role:'service_role'})).toString('base64')+'.x';assert.throws(()=>create({...config,publishableKey:token}),/Nunca use service_role/);
 });
+
+test('Revisão envia versão e tentativa ao RPC protegido; histórico carrega somente o pedido indicado',async()=>{
+ const calls=[];const store=create(config,{storage:storage(),fetch:async(url,options)=>{
+  if(url.includes('/token?'))return response({access_token:'token',refresh_token:'refresh',expires_in:3600});
+  if(url.endsWith('/user'))return response({id:'seller'});
+  if(url.includes('/profiles?'))return response([{id:'seller',role:'seller',active:true}]);
+  assert.equal(options.headers.Authorization,'Bearer token');calls.push({url,body:options.body&&JSON.parse(options.body)});
+  return response(url.includes('/rpc/')?{id:order.id,revision:2}:[{revision:1,payload:order}]);
+ }});
+ await store.signIn('test@example.test','pass');await store.reviseOrder(order,1,'Outra cor','attempt-uuid');
+ assert.deepEqual(calls[0].body,{p_order_id:order.id,p_expected_revision:1,p_payload:order,p_reason:'Outra cor',p_request_id:'attempt-uuid'});
+ assert.equal((await store.orderHistory('id & especial'))[0].revision,1);assert.ok(calls[1].url.includes('order_id=eq.id%20%26%20especial'));assert.ok(calls[1].url.includes('order=revision.asc'));
+});
 test('Apps Script em modo servidor exige token e fecha o acesso legado à planilha',()=>{
  const mock=googleContext();const token='a'.repeat(64);mock.properties.set('DROPTECH_SERVER_TOKEN',token);
  for(const body of [{},{serverToken:'wrong',payload:{version:1,orders:[order]}}]){

@@ -41,3 +41,6 @@ dialog#orderPreview::backdrop { background: #0f172a99; }
     .order-closing { grid-template-columns: 1fr 1fr; }
     * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }
+
+dialog#revisionHistory{width:min(780px,95vw);max-height:92vh;padding:0;border:0;border-radius:12px;color:#243329}dialog#revisionHistory::backdrop{background:#0f172a99}.order-origin{margin:14px 0;font-size:12px}.order-items .item-observation{white-space:pre-wrap;overflow-wrap:anywhere}
+@media print{#revisionHistory{display:none!important}}

@@ -76,7 +76,10 @@ function syncOrders(payload) {
         orders.forEach(function(order) {
             var entry = byId[order.id];
             var sheet = entry && spreadsheet.getSheets().filter(function(candidate) { return candidate.getSheetId() === entry.sheetId; })[0];
-            if (sheet && entry.state === 'complete') return;
+            var revision = order.revision || 1;
+            if (entry && (entry.order.revision || 1) > revision)
+                throw new Error('O Google já recebeu uma versão mais recente deste pedido. Atualize o histórico do sistema.');
+            if (sheet && entry.state === 'complete' && (entry.order.revision || 1) === revision) return;
             var created = !sheet;
             if (!entry) {
                 entry = { row: registry.getLastRow() + 1, order: order };
@@ -118,7 +121,9 @@ function syncOrders(payload) {
         SpreadsheetApp.flush();
         return { channel: 'droptech-google-sync', requestId: payload.requestId, ok: true,
             message: orders.length + ' pedido(s) confirmado(s). Esta planilha é atualizada a cada envio.',
-            orderIds: orders.map(function(order) { return order.id; }), spreadsheetUrl: spreadsheet.getUrl() };
+            orderIds: orders.map(function(order) { return order.id; }),
+            orderRevisions: orders.map(function(order) { return {id:order.id,revision:order.revision||1}; }),
+            features: ['item_observations','order_revisions'], spreadsheetUrl: spreadsheet.getUrl() };
     } catch (error) {
         return { channel: 'droptech-google-sync', requestId: payload && payload.requestId, ok: false,
             message: String(error.message || error), orderIds: [], spreadsheetUrl: spreadsheet ? spreadsheet.getUrl() : '' };
@@ -238,7 +243,9 @@ function prepareNewSheet_(sheet, rows, columns) {
 function readRegistry_(sheet) {
     if (sheet.getLastRow() < 2) return [];
     return sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).getValues().map(function(row, index) {
-        return { row: index + 2, sheetId: Number(row[1]), state: row[10], order: {
+        var stateParts = String(row[10]).split('|');
+        return { row: index + 2, sheetId: Number(row[1]), state: stateParts[0], order: {
+            revision: Number(stateParts[1] || 1),
             id: String(row[0]), createdAt: String(row[2]), client: JSON.parse(String(row[3])), cnpj: JSON.parse(String(row[4])),
             buyer: JSON.parse(String(row[5])), phone: JSON.parse(String(row[6])), items: { length: Number(row[7]) }, final: Number(row[8]), payment: JSON.parse(String(row[9]))
         } };
@@ -250,7 +257,7 @@ function writeRegistry_(sheet, entry, state) {
     ensureRows_(sheet, entry.row);
     sheet.getRange(entry.row, 1, 1, 11).setNumberFormat('@').setValues([[order.id, entry.sheetId,
         orderDate_(order).toISOString(), JSON.stringify(order.client), JSON.stringify(order.cnpj), JSON.stringify(order.buyer), JSON.stringify(order.phone),
-        order.items.length, order.final, JSON.stringify(order.payment), state]]);
+        order.items.length, order.final, JSON.stringify(order.payment), state + ((order.revision||1)>1?'|'+order.revision:'')]]);
     entry.state = state;
 }
 
@@ -270,6 +277,8 @@ function validatePayload_(payload) {
         if (!order || !/^[a-zA-Z0-9-]{1,80}$/.test(order.id || '') || ids[order.id])
             throw new Error('Pedido sem identificação válida ou duplicado.');
         ids[order.id] = true;
+        if (order.revision !== undefined && (!Number.isInteger(order.revision) || order.revision < 1))
+            throw new Error('Versão do pedido inválida.');
         ['client', 'cnpj', 'buyer', 'phone', 'payment', 'date'].forEach(function(key) {
             if (typeof order[key] !== 'string' || !order[key].trim() || order[key].length > 1000)
                 throw new Error('Campo inválido no pedido: ' + key);
@@ -277,6 +286,8 @@ function validatePayload_(payload) {
         if (!Array.isArray(order.items) || !order.items.length || order.items.length > 500)
             throw new Error('Cada pedido precisa ter de 1 a 500 itens.');
         order.items.forEach(function(item) {
+            if (item.observation !== undefined && (typeof item.observation !== 'string' || item.observation.length > 500))
+                throw new Error('Observação de item inválida.');
             if (typeof item.product !== 'string' || typeof item.detail !== 'string' || item.product.length > 1000 || item.detail.length > 1000)
                 throw new Error('Descrição de produto inválida.');
             ['meters', 'unitPrice', 'subtotal'].forEach(function(key) {
@@ -330,7 +341,7 @@ function writeOrder_(sheet, order, url, summaryId) {
     var currency = '"R$" #,##0.00';
     sheet.setHiddenGridlines(true);
     sheet.getRange('A1:F1').merge().setValue('DropTech - Pedido comercial').setFontSize(20).setFontColor('#ffffff').setBackground('#1e40af');
-    sheet.getRange('A2:F2').merge().setValue(orderNumber_(order)).setFontWeight('bold');
+    sheet.getRange('A2:F2').merge().setValue(orderNumber_(order) + ' · Versão ' + (order.revision||1)).setFontWeight('bold');
     var metadata = [
         ['Data', orderDate_(order)], ['Empresa / Comprador', text_(order.client)], ['CNPJ', text_(order.cnpj)],
         ['Inscrição estadual', text_(order.ie || 'Não informada')], ['Responsável', text_(order.buyer)],
@@ -342,10 +353,11 @@ function writeOrder_(sheet, order, url, summaryId) {
         if (row[1] instanceof Date) value.setValue(row[1]).setNumberFormat('dd/mm/yyyy hh:mm');
         else value.setNumberFormat('@').setValue(row[1]);
     });
-    sheet.getRange('A12:F12').setValues([['Produto', 'Composição', 'Metros', 'Preço / m (R$)', 'Subtotal (R$)', '']])
+    sheet.getRange('A12:F12').setValues([['Produto', 'Composição', 'Metros', 'Preço / m (R$)', 'Subtotal (R$)', 'Observação']])
         .setBackground('#dbeafe').setFontWeight('bold');
-    var rows = order.items.map(function(item) { return [text_(item.product), text_(item.detail), item.meters, item.unitPrice, item.subtotal, '']; });
+    var rows = order.items.map(function(item) { return [text_(item.product), text_(item.detail), item.meters, item.unitPrice, item.subtotal, text_(item.observation||'')]; });
     sheet.getRange(13, 1, rows.length, 2).setNumberFormat('@');
+    sheet.getRange(13, 6, rows.length, 1).setNumberFormat('@');
     sheet.getRange(13, 1, rows.length, 6).setValues(rows);
     sheet.getRange(13, 3, rows.length, 1).setNumberFormat('#,##0.00');
     sheet.getRange(13, 4, rows.length, 1).setNumberFormat('0.0000');
@@ -358,10 +370,11 @@ function writeOrder_(sheet, order, url, summaryId) {
     sheet.getRange(totalRow + 1, 5).setNumberFormat('0.0%');
     sheet.getRange(totalRow + 3, 4, 1, 2).setBackground('#d1fae5').setFontWeight('bold').setFontSize(14);
     sheet.getRange(totalRow + 5, 1, 1, 6).merge().setValue('Pedido comercial. Documento sem valor fiscal.').setFontColor('#64748b');
+    if (order.renewedFromId) sheet.getRange(totalRow + 6, 1, 1, 6).merge().setValue('Renovação de ' + orderNumber_({id:order.renewedFromId}));
     sheet.getRange(totalRow + 7, 1).setRichTextValue(SpreadsheetApp.newRichTextValue().setText('Voltar à consulta')
         .setLinkUrl(url + '#gid=' + summaryId).build());
     sheet.getRange(1, 1, totalRow + 8, 6).setFontFamily('Arial').setVerticalAlignment('middle').setWrap(true);
-    sheet.setColumnWidth(1, 310).setColumnWidth(2, 250).setColumnWidths(3, 3, 120).setColumnWidth(6, 30);
+    sheet.setColumnWidth(1, 310).setColumnWidth(2, 250).setColumnWidths(3, 3, 120).setColumnWidth(6, 280);
     sheet.setFrozenRows(12);
     sheet.autoResizeRows(1, totalRow + 8);
 }

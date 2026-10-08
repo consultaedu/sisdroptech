@@ -2,7 +2,7 @@ const test=require('node:test');const assert=require('node:assert/strict');const
 function harness(){
  const profiles=[{id:'admin',role:'admin',active:true},{id:'a',role:'seller',active:true},{id:'b',role:'seller',active:true},{id:'off',role:'seller',active:false}].map(p=>({...p,email:p.id+'@example.test',username:p.id==='a'?'vendedor01':'user_'+p.id}));
  const records=[{id:'own',owner_id:'a',payload:{id:'own',client:'Do banco'}},{id:'foreign',owner_id:'b',payload:{id:'foreign',client:'Outro vendedor'}}];
- const updates=[];let exported,handler,created,authCalls=0,limited=false,wrongSession=false;
+ const updates=[];let exported,handler,created,authCalls=0,limited=false,wrongSession=false,googleReply;
  const env={SUPABASE_URL:'https://test.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'private',SUPABASE_ANON_KEY:'public',APP_ORIGINS:'https://app.test',GOOGLE_SYNC_TOKEN:'server-secret'};
  function client(_url,_key,options){const token=options?.global?.headers?.Authorization?.replace('Bearer ','');return {
   rpc:async()=>({data:!limited,error:null}),
@@ -16,14 +16,14 @@ function harness(){
     rows=rows.filter(row=>filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):row[k]===v));
     if(update?.username&&profiles.some(p=>p.username===update.username&&!rows.includes(p)))return {data:null,error:{code:'23505'}};
     if(update){updates.push({table,rows:rows.map(r=>r.id),update});for(const row of rows)Object.assign(row,update);}
-    return {data:single?rows[0]:rows,error:single&&!optional&&!rows.length?{message:'Not found'}:null};
+    return {data:structuredClone(single?rows[0]:rows),error:single&&!optional&&!rows.length?{message:'Not found'}:null};
    }return query;
   }
  };}
  let source=fs.readFileSync(path.join(__dirname,'../supabase/functions/droptech-api/index.ts'),'utf8').replace(/^import .*;\s*/,'');
  source=stripTypeScriptTypes(source);
- vm.runInNewContext(source,{Deno:{env:{get:k=>env[k]},serve:fn=>handler=fn},createClient:client,Request,Response,AbortSignal,crypto:require('node:crypto').webcrypto,fetch:async(url,options)=>{exported=JSON.parse(options.body);return new Response(JSON.stringify({ok:true,orderIds:['own'],spreadsheetUrl:'https://docs.google.com/spreadsheets/d/test/edit'}),{status:200});}});
- return {profiles,updates,get exported(){return exported;},get created(){return created;},get authCalls(){return authCalls;},set limited(value){limited=value;},set wrongSession(value){wrongSession=value;},call:async(token,body,origin='https://app.test')=>{const response=await handler(new Request('https://test',{method:'POST',headers:{Origin:origin,Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)}));return{status:response.status,data:await response.json().catch(()=>null)};}};
+ vm.runInNewContext(source,{Deno:{env:{get:k=>env[k]},serve:fn=>handler=fn},createClient:client,Request,Response,AbortSignal,crypto:require('node:crypto').webcrypto,fetch:async(url,options)=>{exported=JSON.parse(options.body);return new Response(JSON.stringify(googleReply?await googleReply(exported):{ok:true,orderIds:['own'],spreadsheetUrl:'https://docs.google.com/spreadsheets/d/test/edit'}),{status:200});}});
+ return {profiles,records,updates,get exported(){return exported;},get created(){return created;},get authCalls(){return authCalls;},set googleReply(value){googleReply=value;},set limited(value){limited=value;},set wrongSession(value){wrongSession=value;},call:async(token,body,origin='https://app.test')=>{const response=await handler(new Request('https://test',{method:'POST',headers:{Origin:origin,Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)}));return{status:response.status,data:await response.json().catch(()=>null)};}};
 }
 
 test('Login por usuário só devolve sessão após senha válida; falhas não revelam e-mail, conta inativa ou sessão de outra conta',async()=>{
@@ -69,4 +69,14 @@ test('Envio usa dados do banco, nunca payload do navegador, e só admin recebe o
  assert.ok(!JSON.stringify(result.data).includes('server-secret'));
  assert.ok(h.updates.some(u=>u.table==='orders'&&u.rows.join()==='own'&&u.update.google_state==='sent'));
  const admin=await h.call('admin',{action:'sync_google',ids:['own']});assert.equal(admin.status,200);assert.match(admin.data.spreadsheetUrl,/docs.google.com/);
+});
+
+test('Revisões exigem confirmação da versão e script atualizado; resposta antiga não confirma uma revisão nova',async()=>{
+ const h=harness(),own=h.records[0];own.revision=2;own.payload.items=[{observation:'Azul'}];own.google_state='not_sent';
+ assert.equal((await h.call('a',{action:'sync_google',ids:['own']})).status,502);assert.equal(own.google_state,'error');
+ const ack={ok:true,orderIds:['own'],spreadsheetUrl:'https://docs.google.com/spreadsheets/d/test/edit',features:['item_observations','order_revisions'],orderRevisions:[{id:'own',revision:1}]};
+ h.googleReply=()=>ack;assert.equal((await h.call('a',{action:'sync_google',ids:['own']})).status,502);
+ ack.orderRevisions[0].revision=2;h.googleReply=()=>ack;assert.equal((await h.call('a',{action:'sync_google',ids:['own']})).status,200);assert.equal(own.google_state,'sent');assert.equal(h.exported.payload.orders[0].revision,2);
+ h.googleReply=()=>{own.revision=3;own.google_state='not_sent';return ack;};await h.call('a',{action:'sync_google',ids:['own']});assert.equal(own.google_state,'not_sent');
+ h.googleReply=()=>{own.revision=4;own.google_state='not_sent';return {ok:false};};await h.call('a',{action:'sync_google',ids:['own']});assert.equal(own.google_state,'not_sent');
 });

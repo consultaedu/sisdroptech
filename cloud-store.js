@@ -112,8 +112,8 @@
         async function listOrders() {
             const all = [];
             for (let offset=0;;offset+=500) {
-                const rows = await api('/rest/v1/orders?select=id,owner_id,payload,google_state,google_error&order=created_at.asc,id.asc&limit=500&offset='+offset);
-                all.push(...rows.map(row=>({...row.payload,id:row.id,ownerId:row.owner_id,googleState:row.google_state,googleError:row.google_error})));
+                const rows = await api('/rest/v1/orders?select=*&order=created_at.asc,id.asc&limit=500&offset='+offset);
+                all.push(...rows.map(row=>({...row.payload,id:row.id,ownerId:row.owner_id,revision:row.revision||1,updatedAt:row.updated_at,googleState:row.google_state,googleError:row.google_error})));
                 if(rows.length<500) return all;
             }
         }
@@ -135,6 +135,12 @@
             return ak.length===bk.length && ak.every(k=>bk.includes(k)&&equalPayload(a[k],b[k]));
         }
         async function deleteOrder(id) { await api('/rest/v1/orders?id=eq.'+encodeURIComponent(id),{method:'DELETE',headers:{Prefer:'return=representation'}}).then(rows=>{if(rows.length!==1) throw new Error('Pedido não encontrado ou sem permissão.');}); }
+        async function reviseOrder(order,expectedRevision,reason,requestId) {
+            return api('/rest/v1/rpc/revise_order',{method:'POST',body:{p_order_id:order.id,p_expected_revision:expectedRevision,p_payload:order,p_reason:reason,p_request_id:requestId}});
+        }
+        async function orderHistory(id) {
+            return api('/rest/v1/order_revisions?order_id=eq.'+encodeURIComponent(id)+'&select=revision,payload,editor_name,edited_at,reason&order=revision.asc');
+        }
         async function settings() { return api('/rest/v1/rpc/workspace_settings',{method:'POST',body:{}}); }
         async function saveSettings(data) { return api('/rest/v1/app_settings?id=eq.true',{method:'PATCH',body:data}); }
         async function users() { return api('/rest/v1/profiles?select=*&order=full_name.asc'); }
@@ -155,7 +161,7 @@
             await api('/auth/v1/user'); return true;
         }
         async function changePassword(password) { await api('/auth/v1/user',{method:'PUT',body:{password}}); }
-        return {signIn,restore,signOut,listOrders,saveOrder,deleteOrder,settings,saveSettings,users,action,importOrders,recover,recoverySession,changePassword,savedLogin,rememberLogin,
+        return {signIn,restore,signOut,listOrders,saveOrder,deleteOrder,reviseOrder,orderHistory,settings,saveSettings,users,action,importOrders,recover,recoverySession,changePassword,savedLogin,rememberLogin,
             currentProfile:()=>profile,hasSession:()=>!!session,clear};
     }
     const exported={create};

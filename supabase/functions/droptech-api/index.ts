@@ -76,22 +76,38 @@ Deno.serve(async (request:Request) => {
       // Use caller JWT so RLS restricts the records even inside a service function.
       const caller=createClient(url,Deno.env.get('SUPABASE_ANON_KEY')!,{global:{headers:{Authorization:'Bearer '+token}},auth:{persistSession:false,autoRefreshToken:false}});
       const ids=[...new Set(body.ids)];
-      const {data:orders,error}=await caller.from('orders').select('id,payload').in('id',ids);
+      const {data:orders,error}=await caller.from('orders').select('*').in('id',ids);
       if(error||orders?.length!==ids.length)return reply({message:'Pedido não encontrado ou sem permissão'},403);
       const {data:settings}=await admin.from('app_settings').select('google_script_url').eq('id',true).single();
       const secret=Deno.env.get('GOOGLE_SYNC_TOKEN')||'';
       if(!secret||!settings?.google_script_url)return reply({message:'O administrador ainda não configurou o envio ao Google'},409);
       if(!/^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec$/.test(settings.google_script_url))return reply({message:'Destino Google inválido'},400);
-      let result;
+      let result; let syncMessage='O pedido está salvo no banco, mas o Google não confirmou o envio. Tente reenviar.';
+      async function mark(state:string,message:string) {
+        for(const order of orders) {
+          let query=admin.from('orders').update({google_state:state,google_error:message}).eq('id',order.id);
+          // An old request may finish after another user has saved a newer revision.
+          if(order.revision!==undefined)query=query.eq('revision',order.revision);
+          const {error}=await query;
+          if(error)return error;
+        }
+        return null;
+      }
       try {
-        const response=await fetch(settings.google_script_url,{method:'POST',redirect:'follow',headers:{'Content-Type':'application/json'},body:JSON.stringify({serverToken:secret,payload:{version:1,requestId:crypto.randomUUID(),orders:orders.map(o=>o.payload)}}),signal:AbortSignal.timeout(85000)});
+        const response=await fetch(settings.google_script_url,{method:'POST',redirect:'follow',headers:{'Content-Type':'application/json'},body:JSON.stringify({serverToken:secret,payload:{version:1,requestId:crypto.randomUUID(),orders:orders.map(o=>({...o.payload,revision:o.revision||1}))}}),signal:AbortSignal.timeout(85000)});
         result=await response.json();
         if(!response.ok||!result.ok||!Array.isArray(result.orderIds)||ids.some(id=>!result.orderIds.includes(id))||!/^https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9_-]+\/edit$/.test(result.spreadsheetUrl||''))throw new Error(result.message||'O Google não confirmou todos os pedidos.');
+        const needsNewScript=orders.some(o=>(o.revision||1)>1||o.payload.items?.some((item:{observation?:string})=>item.observation));
+        if(needsNewScript && (!result.features?.includes('item_observations')||!result.features?.includes('order_revisions'))){
+          syncMessage='Atualize o Google Apps Script para confirmar observações e revisões. O pedido continua salvo no banco.';
+          throw new Error(syncMessage);
+        }
+        if(needsNewScript && orders.some(o=>!result.orderRevisions?.some((r:{id:string,revision:number})=>r.id===o.id&&r.revision===(o.revision||1))))throw new Error('Versão não confirmada.');
       } catch {
-        await admin.from('orders').update({google_state:'error',google_error:'Envio sem confirmação. O pedido está salvo no banco; reenviar não cria duplicata.'}).in('id',ids);
-        return reply({message:'O pedido está salvo no banco, mas o Google não confirmou o envio. Tente reenviar.'},502);
+        await mark('error',syncMessage);
+        return reply({message:syncMessage},502);
       }
-      const {error:statusError}=await admin.from('orders').update({google_state:'sent',google_error:''}).in('id',ids);
+      const statusError=await mark('sent','');
       await admin.from('app_settings').update({google_sheet_url:result.spreadsheetUrl}).eq('id',true).eq('google_script_url',settings.google_script_url);
       if(statusError)return reply({message:'O Google confirmou o envio, mas o estado no banco não foi atualizado. Um reenvio é seguro.'},502);
       // Full spreadsheet is shared with administrators only, never exposed to sellers.
